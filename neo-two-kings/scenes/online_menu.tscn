@@ -1,0 +1,88 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/online_menu.gd" id="1_online_menu"]
+
+[node name="OnlineMenu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_online_menu")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(1, 1, 1, 1)
+
+[node name="CenterContainer" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer"]
+layout_mode = 2
+theme_override_constants/separation = 28
+
+[node name="Title" type="Label" parent="CenterContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.117647, 0.184314, 0.360784, 1)
+theme_override_font_sizes/font_size = 52
+text = "联机游戏"
+horizontal_alignment = 1
+
+[node name="StatusLabel" type="Label" parent="CenterContainer/VBoxContainer"]
+custom_minimum_size = Vector2(460, 34)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.352941, 0.396078, 0.482353, 1)
+theme_override_font_sizes/font_size = 20
+text = "正在连接服务器…"
+horizontal_alignment = 1
+
+[node name="CreateButton" type="Button" parent="CenterContainer/VBoxContainer"]
+custom_minimum_size = Vector2(300, 64)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 26
+text = "创建房间"
+
+[node name="JoinRow" type="HBoxContainer" parent="CenterContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_constants/separation = 12
+
+[node name="CodeInput" type="LineEdit" parent="CenterContainer/VBoxContainer/JoinRow"]
+custom_minimum_size = Vector2(200, 64)
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+placeholder_text = "房间号"
+max_length = 6
+alignment = 1
+
+[node name="JoinButton" type="Button" parent="CenterContainer/VBoxContainer/JoinRow"]
+custom_minimum_size = Vector2(160, 64)
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+text = "加入房间"
+
+[node name="MessageLabel" type="Label" parent="CenterContainer/VBoxContainer"]
+custom_minimum_size = Vector2(460, 34)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8, 0.176471, 0.141176, 1)
+theme_override_font_sizes/font_size = 20
+horizontal_alignment = 1
+
+[node name="BackButton" type="Button" parent="CenterContainer/VBoxContainer"]
+custom_minimum_size = Vector2(300, 56)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 22
+text = "返回主菜单"

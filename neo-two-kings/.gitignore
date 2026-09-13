@@ -1,0 +1,6 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# 导出产物：可由 export_presets.cfg 随时重新生成，且体积很大
+/exports/

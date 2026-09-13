@@ -1,0 +1,79 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/room_lobby.gd" id="1_room_lobby"]
+
+[node name="RoomLobby" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_room_lobby")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(1, 1, 1, 1)
+
+[node name="CenterContainer" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer"]
+layout_mode = 2
+theme_override_constants/separation = 28
+
+[node name="Title" type="Label" parent="CenterContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.117647, 0.184314, 0.360784, 1)
+theme_override_font_sizes/font_size = 52
+text = "房间大厅"
+horizontal_alignment = 1
+
+[node name="CodeLabel" type="Label" parent="CenterContainer/VBoxContainer"]
+custom_minimum_size = Vector2(460, 70)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.121569, 0.372549, 0.815686, 1)
+theme_override_font_sizes/font_size = 44
+text = "房间号 000000"
+horizontal_alignment = 1
+
+[node name="HintLabel" type="Label" parent="CenterContainer/VBoxContainer"]
+custom_minimum_size = Vector2(460, 34)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.352941, 0.396078, 0.482353, 1)
+theme_override_font_sizes/font_size = 20
+text = "等待对手加入…"
+horizontal_alignment = 1
+
+[node name="RoleLabel" type="Label" parent="CenterContainer/VBoxContainer"]
+custom_minimum_size = Vector2(460, 34)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.352941, 0.396078, 0.482353, 1)
+theme_override_font_sizes/font_size = 20
+text = "你执红方，先手"
+horizontal_alignment = 1
+
+[node name="StartButton" type="Button" parent="CenterContainer/VBoxContainer"]
+custom_minimum_size = Vector2(300, 64)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 26
+disabled = true
+text = "开始游戏"
+
+[node name="LeaveButton" type="Button" parent="CenterContainer/VBoxContainer"]
+custom_minimum_size = Vector2(300, 56)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 22
+text = "离开房间"
