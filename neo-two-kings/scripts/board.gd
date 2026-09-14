@@ -51,8 +51,8 @@ var _highlights: Dictionary = {}
 # --- 按压 / 长按状态 ---
 # 当前按住不放的格子；Vector2i(-1, -1) 表示没有按压
 var _press_cell := Vector2i(-1, -1)
-# 本次按压已经持续了多久（秒）
-var _press_elapsed := 0.0
+# 本次按压从什么时刻开始（毫秒，取自 Time.get_ticks_msec()）
+var _press_started_ms := 0
 # 本次按压是否已经升级成长按
 var _long_pressed := false
 
@@ -81,13 +81,31 @@ func _on_mouse_exited() -> void:
 # --- 按压与长按 ---
 
 ## 长按计时。只在按住期间由 set_process(true) 驱动。
-func _process(delta: float) -> void:
+##
+## ⚠ 这里刻意用**真实时钟**（Time.get_ticks_msec）而不是逐帧累加 delta：
+## 引擎在窗口失焦/被遮挡时会压缩每帧的 delta（实测一拍仍然只给 ~0.017 秒），
+## 于是「累加 delta」比真实时间慢得多——玩家按满 0.4 秒、卡片却不弹，或者干脆永远不弹。
+## 长按是**玩家的手感**，必须按墙上时钟算，才和玩家感知到的时间一致。
+func _process(_delta: float) -> void:
+	_check_long_press()
+
+
+## 到点了就把这次按压升级成长按（只发一次信号）。
+## 由 _process 与 _input 一起驱动：万一某一帧被引擎跳过，下一个输入事件也能把它补上。
+func _check_long_press() -> void:
 	if _press_cell.x < 0 or _long_pressed:
 		return
-	_press_elapsed += delta
-	if _press_elapsed >= long_press_duration:
-		_long_pressed = true
-		cell_long_pressed.emit(_press_cell.x, _press_cell.y)
+	if _press_held_seconds() < long_press_duration:
+		return
+	_long_pressed = true
+	cell_long_pressed.emit(_press_cell.x, _press_cell.y)
+
+
+## 本次按压已经按住多久（秒，真实时间）。没有按压时返回 0。
+func _press_held_seconds() -> float:
+	if _press_cell.x < 0:
+		return 0.0
+	return float(Time.get_ticks_msec() - _press_started_ms) / 1000.0
 
 
 ## 松手统一在 _input 里收尾，而不是 _gui_input：
@@ -98,6 +116,9 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 		_finish_press()
+		return
+	# 按住期间的任何输入事件都顺带对一次表：引擎跳帧时也能准时升级成长按
+	_check_long_press()
 
 
 # --- 几何 ---
@@ -390,7 +411,7 @@ func _gui_input(event: InputEvent) -> void:
 
 func _begin_press(cell: Vector2i) -> void:
 	_press_cell = cell
-	_press_elapsed = 0.0
+	_press_started_ms = Time.get_ticks_msec()
 	_long_pressed = false
 	set_process(true)
 
@@ -423,7 +444,7 @@ func _cancel_press() -> void:
 
 func _clear_press() -> void:
 	_press_cell = Vector2i(-1, -1)
-	_press_elapsed = 0.0
+	_press_started_ms = 0
 	_long_pressed = false
 	set_process(false)
 
