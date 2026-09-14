@@ -3,9 +3,9 @@
 
 前身为TwoKings，是一款策略棋类游戏，原仓库在
 
-'''
+```
 https://github.com/qfwj-lyy/TwoKingsV1.0
-'''
+```
 
 现用ai进行重置，当前游戏名可能不是最终游戏名
 
