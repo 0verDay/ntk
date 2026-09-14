@@ -48,11 +48,12 @@ ARROW_COLORS = {"move": "#1f5fd0", "shot": "#d0402f", "hop": "#7a5cd0"}
 #: 兵种显示字（与 PieceInfo.SYMBOLS 一致）。
 SYMBOLS = ("王", "弓", "骑", "盾", "步")
 
-TOOLS = [("piece", "摆子"), ("arrow", "箭头"), ("highlight", "高亮")]
+TOOLS = [("piece", "摆子"), ("arrow", "箭头"), ("highlight", "高亮"), ("view", "镜头")]
 TOOL_HINTS = {
     "piece": "左键放棋子、右键擦掉（先选兵种与红/绿）",
     "arrow": "左键点起点、再点终点画箭头；右键取消起点或删掉碰着这格的箭头",
     "highlight": "左键切换这一格的橙色高亮",
+    "view": "在这一帧上拖一个矩形＝这一帧只看这几格（镜头外面不画）；右键＝恢复成按内容自动推",
 }
 
 HELP = (
@@ -62,6 +63,11 @@ HELP = (
 
 PROPS_WIDTH = 320
 LEFT_WIDTH = 250
+
+#: 镜头框的颜色（和「选中格」的蓝区分开，免得看混）。
+VIEW_COLOR = "#8a5cd0"
+#: 镜头外的压暗：Tkinter 的矩形没有透明度，只能这样示意。
+VIEW_OUTSIDE_FILL = "#9aa3b8"
 
 
 def _pick_font(root: tk.Misc, prefers: List[str], fallback: str, size: int) -> tkfont.Font:
@@ -94,6 +100,10 @@ class EditorApp:
         self.selected_cell: Optional[Point] = None
         #: 画箭头时先点的那个起点
         self.pending_from: Optional[Point] = None
+        #: 「镜头」工具拖矩形时的起点格（松开鼠标才真正定下矩形）
+        self.drag_from: Optional[Point] = None
+        #: 拖动过程中当前落在哪一格（用来画预览框）
+        self.drag_to: Optional[Point] = None
         self.dirty = False
         self._rebuilding = False
         #: 所有 Tk 变量都要留一个引用：被 GC 掉的话控件会发疯（实测踩过一次）
@@ -231,6 +241,8 @@ class EditorApp:
         self.canvas.pack(fill="both", expand=True, pady=6)
         self.canvas.bind("<Button-1>", lambda event: self.on_board_click(event, primary=True))
         self.canvas.bind("<Button-3>", lambda event: self.on_board_click(event, primary=False))
+        self.canvas.bind("<B1-Motion>", self.on_board_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_board_release)
         self.canvas.bind("<Configure>", lambda event: self.draw_board())
 
         # --- 右：属性 ---
@@ -305,6 +317,7 @@ class EditorApp:
         self._update_title()
         self.summary_label.configure(text=self.doc.summary())
         self.pending_from = None
+        self.drag_from = self.drag_to = None
 
     # ------------------------------------------------------------------ 顶部选择
 
@@ -362,7 +375,9 @@ class EditorApp:
         text = " ".join(str(frame.text).split())
         if len(text) > 12:
             text = text[:12] + "…"
-        return f"{index + 1}. {float(frame.hold):g}s · {len(frame.pieces or {})}子 {len(frame.arrows or [])}箭 {text}"
+        # 写了镜头的帧标一个 ◻，一眼看出哪几帧的显示范围是自己定的
+        view = "◻ " if model.view_of(frame) is not None else ""
+        return f"{index + 1}. {view}{float(frame.hold):g}s · {len(frame.pieces or {})}子 {len(frame.arrows or [])}箭 {text}"
 
     def on_frame_select(self, _event: Any = None) -> None:
         selection = self.frame_list.curselection()
@@ -371,6 +386,7 @@ class EditorApp:
         self.frame_index = int(selection[0])
         self.selected_cell = None
         self.pending_from = None
+        self.drag_from = self.drag_to = None
         self.refresh_props()
         self.draw_board()
 
@@ -516,6 +532,9 @@ class EditorApp:
             for item in frame.arrows or []:
                 self._draw_arrow(point_of(item["from"]), point_of(item["to"]), str(item.get("style", "move")))
 
+        # 镜头框画在所有内容之上：外面要压暗，里面才是这一帧真正会被看到的部分
+        self._draw_view(frame, cell, ox, oy, size)
+
         if self.selected_cell is not None:
             x0, y0 = ox + self.selected_cell[0] * cell, oy + self.selected_cell[1] * cell
             canvas.create_rectangle(x0 + 1, y0 + 1, x0 + cell - 1, y0 + cell - 1, outline=SELECT_COLOR, width=2)
@@ -526,6 +545,42 @@ class EditorApp:
             color = ARROW_COLORS[self.arrow_style]
             canvas.create_oval(cx - radius, cy - radius, cx + radius, cy + radius, outline=color, width=2)
             canvas.create_text(cx, cy - radius - 8, text="起点", fill=color, font=self.small_font)
+
+    def _draw_view(self, frame: Optional[model.kit.Frame], cell: float, ox: float, oy: float, size: int) -> None:
+        """把这一帧的镜头框画出来：框里正常、框外压暗。
+
+        拖动中（`drag_from` / `drag_to`）画的是**预览**框，松手才落到数据上。
+        """
+        rect = self._drag_rect()
+        if rect is None and frame is not None:
+            rect = model.view_of(frame)
+        if rect is None:
+            return
+        x, y, w, h = rect
+        x0, y0 = ox + x * cell, oy + y * cell
+        x1, y1 = x0 + w * cell, y0 + h * cell
+        board = cell * size
+        # 四周压暗（Tkinter 的矩形没有 alpha，用点阵填充示意「这里看不到」）
+        for box in (
+            (ox, oy, ox + board, y0),                    # 上
+            (ox, y1, ox + board, oy + board),            # 下
+            (ox, y0, x0, y1),                            # 左
+            (x1, y0, ox + board, y1),                    # 右
+        ):
+            if box[2] > box[0] and box[3] > box[1]:
+                self.canvas.create_rectangle(*box, fill=VIEW_OUTSIDE_FILL, outline="",
+                                             stipple="gray50")
+        self.canvas.create_rectangle(x0, y0, x1, y1, outline=VIEW_COLOR, width=2, dash=(5, 3))
+        self.canvas.create_text(x0 + 4, y0 + 8, text=f"镜头 {w}×{h}", anchor="w", fill=VIEW_COLOR,
+                                font=self.small_font)
+
+    def _drag_rect(self) -> Optional[Tuple[int, int, int, int]]:
+        """拖动中的镜头矩形 `(x, y, w, h)`；没在拖时返回 None。"""
+        if self.drag_from is None or self.drag_to is None:
+            return None
+        x0, x1 = sorted((self.drag_from[0], self.drag_to[0]))
+        y0, y1 = sorted((self.drag_from[1], self.drag_to[1]))
+        return (x0, y0, x1 - x0 + 1, y1 - y0 + 1)
 
     def _draw_arrow(self, start: Point, end: Point, style: str) -> None:
         x0, y0 = self._cell_center(start)
@@ -544,6 +599,58 @@ class EditorApp:
 
     # ------------------------------------------------------------------ 棋盘上的编辑
 
+    def on_board_drag(self, event: Any) -> None:
+        """按住左键拖：只有「镜头」工具在拖矩形，其它工具忽略。"""
+        if self.tool != "view" or self.drag_from is None:
+            return
+        cell = self._event_to_cell(event)
+        if cell is None or cell == self.drag_to:
+            return
+        self.drag_to = cell
+        self.draw_board()
+        rect = self._drag_rect()
+        if rect is not None:
+            self._set_status(f"镜头预览：{rect[2]}×{rect[3]}（左上角 {rect[0], rect[1]}），松手生效")
+
+    def on_board_release(self, event: Any) -> None:
+        """松手定下镜头。"""
+        if self.tool != "view" or self.drag_from is None:
+            return
+        cell = self._event_to_cell(event)
+        if cell is not None:
+            self.drag_to = cell
+        rect = self._drag_rect()
+        self.drag_from = self.drag_to = None
+        if rect is None:
+            self.draw_board()
+            return
+        frame = self._frame()
+        if frame is None:
+            self.draw_board()
+            return
+        self.doc.push_undo()
+        self._apply_view(frame, *rect)
+
+    def _apply_view(self, frame: model.kit.Frame, x: int, y: int, w: int, h: int) -> None:
+        """把镜头写进这一帧，并把「镜头外还有什么」直接说给作者听（只提醒，不拦）。"""
+        demo = self._demo()
+        try:
+            model.set_view(frame, x, y, w, h, demo.size if demo else 7)
+        except ValueError as exc:
+            self._set_status(str(exc), error=True)
+            self.draw_board()
+            return
+        outside = model.content_outside_view(frame)
+        if outside:
+            self._set_status(
+                "镜头 %d×%d 设好了；注意这些东西在镜头外、画面上看不到：%s（有意裁掉就忽略）"
+                % (w, h, "、".join(outside[:4])),
+                error=True,
+            )
+        else:
+            self._set_status(f"镜头 {w}×{h} 设好了（左上角 ({x}, {y})）：这一帧只看这几格")
+        self._touch(rebuild_props=True)
+
     def on_board_click(self, event: Any, primary: bool) -> None:
         cell = self._event_to_cell(event)
         if cell is None:
@@ -551,6 +658,21 @@ class EditorApp:
         self.selected_cell = cell
         frame = self._frame()
         if frame is None:
+            self.draw_board()
+            return
+
+        if self.tool == "view":
+            # 左键按下只是**起点**：拖到哪松手，镜头就是那个矩形（见 on_board_release）
+            if primary:
+                self.drag_from = cell
+                self.drag_to = cell
+                self._set_status(f"镜头左上角定在 {cell}：拖到右下角再松手（右键＝恢复成自动）")
+            else:
+                self.doc.push_undo()
+                model.clear_view(frame)
+                self.drag_from = self.drag_to = None
+                self._set_status("这一帧的镜头恢复成「按内容自动推」")
+                self._touch(rebuild_props=True)
             self.draw_board()
             return
 
@@ -720,6 +842,7 @@ class EditorApp:
         row = self._hint(row, f"这一帧画了 {len(frame.pieces or {})} 枚棋子、"
                               f"{len(frame.highlights or [])} 个高亮格、{len(frame.arrows or [])} 条箭头")
         row = self._hint(row, "棋子与高亮都在棋盘上点：上面选工具，右键＝擦 / 删 / 取消")
+        row = self._view_props(demo, frame, row)
 
         if frame.arrows:
             row = self._label(row, "这一帧的箭头（点右边的「删」去掉）")
@@ -732,6 +855,109 @@ class EditorApp:
                            command=lambda i=index: self._remove_arrow(frame, i)).grid(row=row, column=0, sticky="e")
                 row += 1
         return row
+
+    # --- 镜头（这一帧的显示范围）---
+
+    def _view_props(self, demo: Any, frame: Any, row: int) -> int:
+        row = self._section(row, "镜头（这一帧显示哪几格）")
+        current = model.view_of(frame)
+        if current is None:
+            auto = model.content_bounds(frame)
+            row = self._hint(
+                row,
+                "现在没写：游戏端按这一帧的内容自动推，"
+                f"大约是 {auto[2]}×{auto[3]}（左上角 {auto[0], auto[1]}）。"
+                "要自己定就在棋盘上用「镜头」工具拖个矩形，或直接在下面填。",
+            )
+            start = auto
+        else:
+            row = self._hint(row, f"已写死：{current[2]}×{current[3]}（左上角 {current[0], current[1]}）")
+            start = current
+
+        grid = ttk.Frame(self.props)
+        grid.grid(row=row, column=0, sticky="w", pady=(0, 4))
+        row += 1
+        values = {"x": start[0], "y": start[1], "w": start[2], "h": start[3]}
+        spins: Dict[str, tk.IntVar] = {}
+        for index, (key, label) in enumerate((("x", "左上 x"), ("y", "左上 y"), ("w", "宽"), ("h", "高"))):
+            ttk.Label(grid, text=label, style="Muted.TLabel").grid(row=0, column=index * 2, padx=(0, 2))
+            variable = tk.IntVar(value=int(values[key]))
+            self._vars.append(variable)  # 必须留引用，见 __init__ 的说明
+            spins[key] = variable
+            spin = ttk.Spinbox(grid, from_=0, to=demo.size, textvariable=variable, width=4,
+                               command=lambda f=frame, s=spins: self._view_from_form(f, s))
+            spin.grid(row=0, column=index * 2 + 1, padx=(0, 6))
+            spin.bind("<FocusOut>", lambda event, f=frame, s=spins: self._view_from_form(f, s))
+
+        buttons = ttk.Frame(self.props)
+        buttons.grid(row=row, column=0, sticky="w", pady=(2, 4))
+        row += 1
+        ttk.Button(buttons, text="按内容贴合", style="Tool.TButton",
+                   command=lambda: self._view_fit_content(frame)).pack(side="left", padx=(0, 4))
+        ttk.Button(buttons, text="整段都用它", style="Tool.TButton",
+                   command=lambda: self._view_apply_to_demo(demo, frame)).pack(side="left", padx=(0, 4))
+        ttk.Button(buttons, text="恢复自动", style="Tool.TButton",
+                   command=lambda: self._view_clear(frame)).pack(side="left")
+
+        if current is not None:
+            outside = model.content_outside_view(frame)
+            if outside:
+                row = self._hint(row, "警告：这些东西在镜头外，画面上看不到——"
+                                      + "、".join(outside[:4]) + "（有意裁掉就忽略）")
+        row = self._hint(row, "舞台（整块画布）取全段所有镜头的最大值：镜头比它小的帧会居中显示，"
+                              "所以文字排版不会跟着抖。")
+        row = self._hint(row, "想让镜头硬切、不滑过去，就勾上下面这项。")
+        row = self._check_row(row, "这一帧硬切（不做 0.28 秒过渡）", bool(frame.view_hold),
+                              lambda value: self._set_view_hold(frame, value))
+        return row
+
+    def _check_row(self, row: int, label: str, value: bool, setter: Any) -> int:
+        variable = tk.BooleanVar(value=bool(value))
+        self._vars.append(variable)
+        box = ttk.Checkbutton(self.props, text=label, variable=variable,
+                              command=lambda: setter(variable.get()))
+        box.grid(row=row, column=0, sticky="w", pady=(0, 4))
+        return row + 1
+
+    def _view_from_form(self, frame: Any, spins: Dict[str, tk.IntVar]) -> None:
+        """属性栏那四个格子改完（回车 / 失焦 / 点箭头）就落到数据上。"""
+        values = tuple(int(spins[key].get()) for key in ("x", "y", "w", "h"))
+        if model.view_of(frame) == values:
+            return
+        self.doc.push_undo()
+        self._apply_view(frame, *values)
+
+    def _view_fit_content(self, frame: Any) -> None:
+        """按这一帧的内容（棋子/高亮/箭头两端）贴合镜头——正好等于「自动推」会用的那个范围。"""
+        self.doc.push_undo()
+        self._apply_view(frame, *model.content_bounds(frame))
+
+    def _view_clear(self, frame: Any) -> None:
+        self.doc.push_undo()
+        model.clear_view(frame)
+        self._set_status("这一帧的镜头恢复成「按内容自动推」")
+        self._touch(rebuild_props=True)
+
+    def _view_apply_to_demo(self, demo: Any, frame: Any) -> None:
+        """把这一帧的镜头抄给整段所有帧——「整段一个固定视口」最省事的做法。"""
+        current = model.view_of(frame)
+        if current is None:
+            current = model.content_bounds(frame)
+        self.doc.push_undo()
+        for other in demo.frames:
+            other.view = tuple(current)
+        self._set_status(
+            f"整段 {len(demo.frames)} 帧的镜头都设成 {current[2]}×{current[3]}"
+            f"（左上角 {current[0], current[1]}）"
+        )
+        self._touch(rebuild_props=True)
+
+    def _set_view_hold(self, frame: Any, value: bool) -> None:
+        frame.view_hold = bool(value)
+        self.dirty = True
+        self._update_title()
+        self.draw_board()
+        self._set_status("这一帧的镜头会硬切（不过渡）" if value else "这一帧的镜头会滑过去（0.28 秒过渡）")
 
     def _set_text(self, frame: Any, value: str) -> None:
         frame.text = value

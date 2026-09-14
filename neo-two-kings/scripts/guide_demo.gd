@@ -6,6 +6,10 @@ extends Control
 ## 它只做三件事——画帧、用一个 Tween 推进进度、在别人看不见的时候停下来。
 ## **不含任何棋规判断，也不做任何演算**：画什么完全来自 GuideDemos（也就是 JSON 里写死的帧）。
 ##
+## 「看哪几格」由每一帧自己的那个矩形决定（作者在 `tools/demos/*.py` 里写 `view=rect(...)`，
+## 不写就按这一帧的内容自动推）——见 GuideDemos.view_of 与 canvas_of：舞台整段只有一个
+## （所有视口里最大的那个），比它小的镜头**居中**放在舞台里，所以镜头移动不会让文字重排。
+##
 ## 配色与字形刻意和真实棋盘同一套来源（Piece.CAMP_COLORS、Board.line_color、
 ## PieceGuide 的三种文字色），所以改了棋盘主题，指南里的演示会跟着变，
 ## 但演示并不复用 Board / Piece 节点——对局视图的职责不被污染。
@@ -67,8 +71,10 @@ var _tween: Tween = null
 var _bounds_tween: Tween = null
 
 # 演示区域几何（每次重排时重算）
-## 整段演示的画布范围（不变，用来定画布尺寸），以及当前正在显示的范围。
+## 整段演示的**舞台**：作者写了 view 就是所有视口尺寸的最大值，否则是所有帧内容的并集。
+## 它整段不变，用来定画布尺寸；当前这一帧看哪几格由 _shown_bounds 说了算。
 var _canvas_bounds := Rect2i(Vector2i.ZERO, Vector2i(7, 7))
+## 当前这一帧的**镜头**（作者写的 view，或按内容自动推出来的包围盒），逐帧变。
 ## 用 Rect2 而不是 Rect2i：过渡过程中它取小数，「逐格放大」才看得出是连续的缩放。
 var _shown_bounds := Rect2(Vector2.ZERO, Vector2(7, 7))
 ## 由 _shown_bounds 算出的格宽、棋盘左上角与像素尺寸。
@@ -101,7 +107,8 @@ func _ready() -> void:
 ## 传空数组时这个控件不会画任何东西（测试用来确认「没剧本就什么都不画」）。
 func set_frames(frames: Array) -> void:
 	_frames = frames
-	_canvas_bounds = GuideDemos.bounds_of(frames)
+	# 舞台取整段的最大视口（作者写了 view 时），没写就是原来的自动推导——见 GuideDemos.canvas_of
+	_canvas_bounds = GuideDemos.canvas_of(frames)
 	_index = 0
 	_elapsed = 0.0
 	_update_canvas_size()
@@ -164,14 +171,20 @@ func _update_canvas_size() -> void:
 
 
 ## 把「正在显示的范围」对准这一帧该有的范围。snap 为真时直接到位（载入演示时用）。
+##
+## 目标范围由 GuideDemos.view_of 给：作者写了 `view` 就是那个矩形（哪怕它比内容小、
+## 会把棋子裁到画面外——那是作者的表达），没写才是这一帧内容的包围盒。
+## 这一帧空着（view_of 返回空）时什么都不做：镜头停在上一帧，不会跳回整块棋盘。
 func _sync_bounds(frame: Dictionary, snap: bool = false) -> void:
 	if frame.is_empty():
 		return
-	var target := GuideDemos.frame_bounds(frame)
-	if target.size.x <= 0:
+	var target := GuideDemos.view_of(frame)
+	if target.size.x <= 0 or target.size.y <= 0:
 		return
 	var target_rect := Rect2(Vector2(target.position), Vector2(target.size))
-	if snap or not is_inside_tree():
+	# 作者要求这一帧硬切：不走 Tween，直接赋值（不然 _process 里的重绘判断会以为在过渡）
+	var hard_cut := snap or GuideDemos.view_hold(frame)
+	if hard_cut or not is_inside_tree():
 		_stop_bounds_tween()
 		_shown_bounds = target_rect
 		return
@@ -475,6 +488,21 @@ func get_status_text() -> String:
 	if frame.is_empty():
 		return ""
 	return str(frame.get("text", ""))
+
+
+## 每一格现在画多大（像素）；没在播或没载入帧时为 0。
+func get_cell_size() -> float:
+	return _cell if not _frames.is_empty() else 0.0
+
+
+## 棋盘（当前镜头那几格）在控件里占的像素尺寸（宽, 高）。供测试与调试查询。
+func get_board_side() -> Vector2:
+	return _side
+
+
+## 棋盘左上角在控件里的位置（像素）。
+func get_board_origin() -> Vector2:
+	return _origin
 
 
 # --- 坐标 ---

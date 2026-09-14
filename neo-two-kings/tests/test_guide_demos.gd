@@ -39,6 +39,8 @@ func _run() -> void:
 	_test_no_duplicate_frames()
 	_test_holds()
 	await _test_demo_bounds()
+	await _test_custom_view()
+	_test_json_view_decoding()
 	await _test_bounds_transition_is_animated()
 	await _test_demo_control_plays()
 	_completed = true
@@ -204,6 +206,20 @@ func _test_demo_bounds() -> void:
 				"「%s」每帧的紧凑范围都覆盖了该帧的元素（漏掉的：%s）" % [symbol, frame_outside if frame_outside != "" else "无"]
 			)
 
+			# 4. 没写 view 的帧，镜头必须**就是**那个自动推出来的范围
+			#    （现在的六段都没有写 view，所以这条守的是「加了视口功能也没改变原有画面」）
+			var view_differs := ""
+			for frame in frames:
+				var auto_rect := GuideDemos.frame_bounds(frame)
+				var lens := GuideDemos.view_of(frame)
+				if auto_rect != lens or GuideDemos.view_hold(frame):
+					view_differs = "%s → %s" % [auto_rect, lens]
+					break
+			_check(
+				view_differs == "",
+				"「%s」没写 view 时镜头就是自动范围（对不上的：%s）" % [symbol, view_differs if view_differs != "" else "无"]
+			)
+
 	# 弓那段的缩放节奏（现在是写死的帧数据，所以范围也是钉死的）：
 	# 摆位/走子时弓还在 (0,0)，范围 5×4；走到 (1,1)、只剩一条斜线时收到 4×3；
 	# 两个敌人从画面上消失后收到 2×2——「打完这一炮棋盘收回来」正是这段要传达的。
@@ -230,6 +246,160 @@ func _visible_cells(frame: Dictionary) -> Array:
 		cells.append(arrow["from"])
 		cells.append(arrow["to"])
 	return cells
+
+
+## 设计师自己规定的镜头（`view=rect(x, y, 宽, 高)`）——这一段全是合成数据，不依赖剧本里有没有人用。
+##
+## 守的是四条规矩：
+##   1. 写了 view 就用它（不是自动范围）；
+##   2. 舞台（画布）= 所有视口尺寸的**最大值**，整段只此一个；
+##   3. 镜头比舞台小的帧，画面**居中**（不是靠左上角）；
+##   4. `view_hold` 硬切、不滑过去。
+func _test_custom_view() -> void:
+	print("-- 自己规定的镜头（view）--")
+	var size := 6
+	var frames := [
+		_synthetic_frame(size, Rect2i(0, 0, 3, 3), Vector2i(0, 0)),
+		_synthetic_frame(size, Rect2i(2, 2, 3, 3), Vector2i(2, 2)),
+		# 更大的视口：舞台由它决定
+		_synthetic_frame(size, Rect2i(0, 1, 4, 4), Vector2i(0, 1)),
+		_synthetic_frame(size, Rect2i(1, 1, 2, 2), Vector2i(1, 1), true),
+	]
+
+	# 1. 写了 view 就按它来
+	_check(
+		GuideDemos.view_of(frames[0]) == Rect2i(0, 0, 3, 3),
+		"写了 view 的帧，镜头就是那个矩形（%s）" % GuideDemos.view_of(frames[0])
+	)
+	_check(GuideDemos.view_hold(frames[3]), "第 4 帧声明了 view_hold（硬切）")
+	_check(not GuideDemos.view_hold(frames[0]), "没声明的帧照旧走过渡")
+
+	# 2. 舞台 = 最大的那个视口（4×4），不是并集、也不是某一帧的
+	var canvas := GuideDemos.canvas_of(frames)
+	_check(
+		canvas == Rect2i(0, 0, 4, 4),
+		"舞台取所有视口的最大值 4×4（实际 %s）" % canvas
+	)
+
+	# 3. 小镜头要**居中**在舞台里
+	var stage := GuideDemo.new()
+	add_child(stage)
+	stage.custom_minimum_size = Vector2.ZERO
+	stage.size = Vector2(276, 314)
+	stage.set_frames(frames)
+	await get_tree().process_frame
+
+	stage.goto_frame(0)
+	await get_tree().process_frame
+	var shown := stage.get_shown_bounds()
+	_check(shown.size.is_equal_approx(Vector2(3, 3)), "第 1 帧只看 3×3（实际 %s）" % shown.size)
+	var cell := stage.get_cell_size()
+	_check(cell > 0.0, "格子有实际大小（%.1f 像素）" % cell)
+	# 居中判据：棋盘左边 = 「舞台在控件里居中」+ 「镜头在舞台里居中」。
+	# 纵向不这么算——棋盘上方那 38px（GuideDemo.STATUS_RESERVE）是留给说明文字的。
+	var expected_x := (stage.size.x - 4.0 * cell) * 0.5 + (4.0 - shown.size.x) * cell * 0.5
+	_check(
+		absf(stage.get_board_origin().x - expected_x) < 0.5,
+		"3×3 的镜头在 4×4 的舞台里居中（棋盘左边 %.1f，应当是 %.1f）" % [
+			stage.get_board_origin().x, expected_x,
+		]
+	)
+	_check(
+		stage.get_board_side().is_equal_approx(shown.size * cell),
+		"棋盘像素尺寸 = 镜头格数 × 格宽（%s）" % stage.get_board_side()
+	)
+
+	# 4. 硬切：声明了 view_hold 的那一帧不起过渡
+	stage.goto_frame(2)
+	await get_tree().process_frame
+	stage._sync_bounds(frames[3])
+	_check(
+		not stage.is_bounds_animating(),
+		"view_hold=True 的帧直接到位、不起过渡 Tween"
+	)
+	_check(
+		stage.get_shown_bounds().size.is_equal_approx(Vector2(2, 2)),
+		"而且当场就是它自己的 2×2（实际 %s）" % stage.get_shown_bounds().size
+	)
+	_check(
+		stage.get_shown_bounds().position.is_equal_approx(Vector2(1, 1)),
+		"镜头位置也按 (1,1) 走（实际 %s）" % stage.get_shown_bounds().position
+	)
+
+	# 声明了 view 之后，自动推的那一套就不该再参与
+	_check(
+		GuideDemos.view_of(frames[3]) != GuideDemos.frame_bounds(frames[3]),
+		"这一帧的镜头与自动范围不同（说明确实是作者说了算）"
+	)
+
+	stage.queue_free()
+	await get_tree().process_frame
+
+
+## 造一帧：结构必须与 GuideDemos.build() 的产物一致（state/highlight/arrows/view/…）。
+## 内容只有一枚棋子，其余全靠 view —— 这样「镜头」与「内容」是两件独立的事，一眼看得出。
+func _synthetic_frame(size: int, view: Rect2i, piece_cell: Vector2i, hold_view: bool = false) -> Dictionary:
+	return {
+		"state": {piece_cell: PieceInfo.new(PieceInfo.Kind.PAWN, PieceInfo.Camp.RED)},
+		"highlight": {},
+		"arrows": [],
+		"view": view,
+		"view_hold": hold_view,
+		"text": "合成帧 %s" % str(view),
+		"hold": 2.0,
+		"board_size": size,
+	}
+
+
+## JSON → 帧这条路上，`view` / `view_hold` 的两个键要真的被认出来（写坏了只报错、不崩）。
+##
+## 这里喂的是**原始 JSON 形状**的字典（pieces 是 {"x,y": [...]}、style 是字符串），
+## 走的就是 tools/export_guide_demos.py 产出的那份格式——所以它守的是「Python 与 GDScript 两个字段名没跑偏」。
+func _test_json_view_decoding() -> void:
+	print("-- JSON 里的 view（Python 导出的那个形状）--")
+	var good := {
+		"caption": "解码用",
+		"size": 7,
+		"frames": [{
+			"text": "只看左下 3×3",
+			"hold": 2.0,
+			"pieces": {"0,0": ["王", "red"]},
+			"highlights": [[0, 0]],
+			"arrows": [{"from": [0, 0], "to": [1, 1], "style": "shot"}],
+			"view": [0, 3, 3, 3],
+			"view_hold": true,
+		}],
+	}
+	var problems: Array = []
+	var demo: Dictionary = GuideDemos.decode_demo(good, "王", problems)
+	_check(problems.is_empty(), "正常的 view 解码不报问题（%s）" % str(problems))
+	var frame: Dictionary = (demo.get("frames", []) as Array)[0]
+	_check(frame.get("view") == Rect2i(0, 3, 3, 3), "view 解成了 Rect2i（%s）" % str(frame.get("view")))
+	_check(bool(frame.get("view_hold", false)), "view_hold 也解出来了")
+	var built: Array = GuideDemos.build(demo)
+	_check(
+		GuideDemos.view_of(built[0]) == Rect2i(0, 3, 3, 3) and GuideDemos.view_hold(built[0]),
+		"帧列表里拿着它就能直接用（view_of / view_hold）"
+	)
+	_check(GuideDemos.canvas_of(built) == Rect2i(0, 0, 3, 3), "舞台按它算（%s）" % GuideDemos.canvas_of(built))
+
+	# 写坏了：只报问题，而且退回「按内容自动推」，不许崩
+	for bad in [
+		{"text": "圆的", "hold": 1.0, "pieces": {}, "view": "3x3"},
+		{"text": "三元的", "hold": 1.0, "pieces": {}, "view": [0, 0, 3]},
+		{"text": "零宽", "hold": 1.0, "pieces": {}, "view": [0, 0, 0, 3]},
+		{"text": "伸出棋盘", "hold": 1.0, "pieces": {}, "view": [5, 5, 3, 3]},
+	]:
+		var bad_problems: Array = []
+		var bad_demo: Dictionary = GuideDemos.decode_demo(
+			{"caption": "坏", "size": 7, "frames": [bad]}, "王", bad_problems
+		)
+		var bad_built: Array = GuideDemos.build(bad_demo)
+		var bad_view: Variant = bad_built[0].get("view") if not bad_built.is_empty() else null
+		_check(
+			not bad_problems.is_empty() and bad_view == Rect2i(),
+			"坏掉的 view「%s」会被指出来、并退回自动推（%s）" % [str(bad.get("text")), str(bad_view)]
+		)
 
 
 ## 缩放必须是**过渡**出来的，不能换帧时跳一下。

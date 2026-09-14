@@ -31,12 +31,26 @@
                 pieces = {(0, 0): red("王"), (1, 1): green("步")},
                 arrows = [arrow((0, 0), (1, 1))],
                 highlights=[(0, 0)],
+                view   = rect(0, 0, 4, 4),   # 这一帧只看左上角 4×4（可不写，见下）
             ),
         ],
     )
 
 **每帧都要把这一帧要显示的棋子写全**（不是增量）——想演「谁没了」，就在下一帧里别写它。
 坐标写 `(x, y)`：x 向右、y 向下，原点在左上角。
+
+## 显示范围（`view`）——镜头看哪几格
+
+`view = rect(x, y, w, h)`：这一帧的镜头 = **左上角 (x, y)、宽 w 格、高 h 格**的矩形。
+写了就完全按它显示（矩形外一律不画）；**不写就由这一帧的内容自动推**（棋子 + 高亮 + 箭头两端的包围盒）。
+
+规则只有三条：
+
+1. **舞台（画布）整段只有一个**，取全段各帧视口尺寸的**最大值**——所以文字排版不会抖。
+2. 视口比舞台小的帧，画面**居中**放在舞台里（不会靠左上角）。想让镜头平移，就改 `view` 的 x/y。
+3. 换帧时视口的移动/缩放有个 0.28 秒的过渡；想要「硬切」就写 `view_hold=True`。
+
+视口装不下这一帧的棋子/箭头时**不拦**（导出只提醒一句），因为「故意裁掉画面外的棋子」也是表达方式。
 
 ⚠ 阵营必须**写明**：`red("王")` / `green("步")`。这里没有棋规可以替你推断半场，
    写清楚了画面上才是你想要的颜色。
@@ -48,7 +62,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Sequence, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 # --------------------------------------------------------------------------------------
 # 常量
@@ -79,6 +93,8 @@ FORMAT_TAG = "neo-two-kings/guide-frames"
 FORMAT_VERSION = 2
 
 Point = Tuple[int, int]
+#: 矩形区域：`(x, y, w, h)`——左上角坐标 + 宽高（都是格子数，不是右下角坐标）。
+Rect = Tuple[int, int, int, int]
 _RawPoint = Union[Sequence[int], Point]
 _CellMapValue = Union[str, Sequence[Any]]
 
@@ -113,6 +129,16 @@ def arrow(frm: _RawPoint, to: _RawPoint, style: str = "move") -> Dict[str, Any]:
     if style not in ARROW_STYLES:
         raise DemoError(f"箭头样式「{style}」不认识，只能是 {ARROW_STYLES}")
     return {"from": _point_json(frm, "arrow() 的起点"), "to": _point_json(to, "arrow() 的终点"), "style": style}
+
+
+def rect(x: Any, y: Any, w: Any, h: Any) -> Rect:
+    """一个矩形区域：左上角 `(x, y)`、宽 `w` 格、高 `h` 格。
+
+    只用来写 `Frame(view=...)`（这一帧的镜头范围）。`w`/`h` 是**格子数**不是右下角坐标，
+    所以 `rect(0, 0, 4, 4)` 覆盖 (0,0)~(3,3) 这 16 格。
+    """
+    return (_plain_int(x, "rect() 的 x"), _plain_int(y, "rect() 的 y"),
+            _plain_int(w, "rect() 的宽"), _plain_int(h, "rect() 的高"))
 
 
 # --------------------------------------------------------------------------------------
@@ -155,6 +181,33 @@ def _point(value: Any, where: str) -> Point:
 def _point_json(value: Any, where: str) -> List[int]:
     x, y = _point(value, where)
     return [x, y]
+
+
+def _plain_int(value: Any, where: str) -> int:
+    """给 `rect()` 用：**不做范围判断**，只挡住 bool / 字符串这种明显写错的类型。
+
+    「矩形是不是在棋盘里、宽高是不是正数」由 `Frame.__post_init__` / `validate()` 说人话地报，
+    所以这里不抛异常——`rect()` 只是个构造器，写在模块顶层炸掉会很难查。
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+    return value
+
+
+def _view_json(value: Any, where: str) -> List[int]:
+    """`view=` 的归一化：接受 `rect(...)` / 4 元组 / 4 元列表，一律变成 `[x, y, w, h]`。"""
+    if isinstance(value, (list, tuple)) and len(value) == 4:
+        return [_plain_int(item, f"{where}[{index}]") for index, item in enumerate(value)]
+    raise DemoError(f"{where} 必须写成 rect(x, y, w, h) 或 (x, y, w, h) 四元组，收到 {value!r}")
+
+
+def _view_of(frame: "Frame") -> Tuple[int, int, int, int]:
+    """帧的视口 `(x, y, w, h)`；没写视口时抛 KeyError（调用方自己判断 has_view）。"""
+    value = frame.view
+    return (int(value[0]), int(value[1]), int(value[2]), int(value[3]))
 
 
 def _point_list_json(values: Any, where: str) -> List[List[int]]:
@@ -229,6 +282,8 @@ class Frame:
     * `pieces`      `{(x, y): red("王")}`：这一帧要显示的**全部**棋子（不是增量）
     * `highlights`  高亮的格子（橙色）
     * `arrows`      `arrow((0,0), (1,1))` 画出来的箭头
+    * `view`        这一帧的镜头范围 `rect(x, y, w, h)`；**不写就按内容自动推**
+    * `view_hold`   换到这一帧时视口不做 0.28 秒过渡，直接硬切
     """
 
     text: str
@@ -236,6 +291,8 @@ class Frame:
     pieces: Mapping[_RawPoint, _CellMapValue] = field(default_factory=dict)
     highlights: Sequence[_RawPoint] = field(default_factory=list)
     arrows: Sequence[Mapping[str, Any]] = field(default_factory=list)
+    view: Optional[Any] = None
+    view_hold: bool = False
 
     def __post_init__(self) -> None:
         self.pieces = _piece_map_json(self.pieces, "pieces")
@@ -245,15 +302,35 @@ class Frame:
             self.hold = float(self.hold)
         except (TypeError, ValueError) as exc:  # pragma: no cover - 防御性
             raise DemoError(f"hold 不是数字：{self.hold!r}") from exc
+        if self.view is not None:
+            self.view = _view_json(self.view, "view")
+            x, y, w, h = _view_of(self)
+            if w <= 0 or h <= 0:
+                raise DemoError(f"view 的宽高必须是正数（收到 w={w}, h={h}）——它是格子数，不是右下角坐标")
+            if x < 0 or y < 0:
+                raise DemoError(f"view 的左上角不能是负数（收到 x={x}, y={y}）")
+        self.view_hold = bool(self.view_hold)
+
+    def has_view(self) -> bool:
+        return self.view is not None
+
+    def view_rect(self) -> Optional[Tuple[int, int, int, int]]:
+        """`(x, y, w, h)`；没写视口时返回 None。"""
+        return _view_of(self) if self.has_view() else None
 
     def to_json(self) -> Dict[str, Any]:
-        return {
+        data: Dict[str, Any] = {
             "text": str(self.text),
             "hold": self.hold,
             "pieces": dict(self.pieces),
             "highlights": [list(item) for item in self.highlights],
             "arrows": [dict(item) for item in self.arrows],
         }
+        if self.has_view():
+            data["view"] = [int(item) for item in _view_of(self)]
+            if self.view_hold:
+                data["view_hold"] = True
+        return data
 
 
 @dataclass
@@ -316,6 +393,13 @@ def _validate_frame(problems: List[str], where: str, frame: Frame, size: int) ->
         problems.append(f"{where}：没写 text——空白帧就是观众只看到棋盘在动，不知道在演什么")
     if not frame.hold > 0:
         problems.append(f"{where}：hold 必须大于 0（现在是 {frame.hold}）")
+    if frame.has_view():
+        x, y, w, h = frame.view_rect()  # type: ignore[misc]
+        if x + w > size or y + h > size:
+            problems.append(
+                f"{where}：view 是 rect({x}, {y}, {w}, {h})，右下角到 ({x + w - 1}, {y + h - 1})，"
+                f"超出了 {size}×{size} 棋盘"
+            )
     for key in frame.pieces:
         try:
             _check_inside(_parse_key(key), size, f"{where} 的棋子")
@@ -345,6 +429,8 @@ def warnings(demos_by_symbol: Mapping[str, Sequence[Demo]]) -> List[str]:
     notes: List[str] = []
     for symbol in PIECE_SYMBOLS:
         for index, demo in enumerate(demos_by_symbol.get(symbol, ())):
+            for frame_index, frame in enumerate(demo.frames):
+                notes.extend(_view_overflow_notes(symbol, index, frame_index, frame))
             for frame_index in range(len(demo.frames) - 1):
                 first, second = demo.frames[frame_index], demo.frames[frame_index + 1]
                 if _same_picture(first, second):
@@ -355,7 +441,59 @@ def warnings(demos_by_symbol: Mapping[str, Sequence[Demo]]) -> List[str]:
     return notes
 
 
+def _view_overflow_notes(symbol: str, demo_index: int, frame_index: int, frame: Frame) -> List[str]:
+    """写了 view、但这一帧有东西落在视口外——**只提醒，不拦**。
+
+    「故意把画面外的棋子裁掉」也是一种表达（比如只想让观众看局部），所以这里不下判决，
+    只把「文字里提到的东西其实看不见」这类事故摆到作者面前。
+    """
+    if not frame.has_view():
+        return []
+    outside = view_overflow(frame)
+    if not outside:
+        return []
+    x, y, w, h = frame.view_rect()  # type: ignore[misc]
+    shown = "、".join(outside)
+    return [
+        f"{symbol} 的第 {demo_index + 1} 段第 {frame_index + 1} 帧：view 是 rect({x}, {y}, {w}, {h})，"
+        f"但这些东西在视口外、画面上看不到——{shown}（有意裁掉就忽略这条）"
+    ]
+
+
+def view_overflow(frame: Frame) -> List[str]:
+    """视口外的东西，形如 `['棋子(5, 5)', '箭头 to(0, 0)']`；没写 view 时返回空。
+
+    导出器的警告与编辑器状态栏共用这一份判断，免得两边说法不一致。
+    """
+    view = frame.view_rect()
+    if view is None:
+        return []
+    x, y, w, h = view
+
+    def inside(cell: Tuple[int, int]) -> bool:
+        return x <= cell[0] < x + w and y <= cell[1] < y + h
+
+    outside: List[str] = []
+    for key in frame.pieces:
+        cell = _parse_key(key)
+        if not inside(cell):
+            outside.append(f"棋子{cell}")
+    for item in frame.highlights:
+        cell = (int(item[0]), int(item[1]))
+        if not inside(cell):
+            outside.append(f"高亮{cell}")
+    for item in frame.arrows:
+        for end in ("from", "to"):
+            if end not in item:
+                continue
+            cell = (int(item[end][0]), int(item[end][1]))
+            if not inside(cell):
+                outside.append(f"箭头{end}{cell}")
+    return list(dict.fromkeys(outside))  # 同一格被两样东西提到时只说一次
+
+
 def _same_picture(first: Frame, second: Frame) -> bool:
+    # 刻意**不管 view**：同一张画换个镜头看（文字往往也换了）是正常表达，不该报「复制忘改」。
     return (
         str(first.text) == str(second.text)
         and dict(first.pieces) == dict(second.pieces)

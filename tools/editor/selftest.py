@@ -114,6 +114,49 @@ def main() -> int:
     check(str(fresh.text).strip() != "", "新帧自带一句占位说明（不然一建出来就是红的）")
     check(str(model.new_demo().caption).strip() != "" and model.new_demo().frames, "新建的动画有标题和一帧")
 
+    print("-- 镜头（这一帧显示哪几格）--")
+    lens = model.new_frame_like()
+    check(model.view_of(lens) is None, "默认不写镜头（＝按内容自动推）")
+    model.set_piece(lens, (1, 1), "王", "red")
+    model.set_piece(lens, (3, 4), "步", "green")
+    model.add_arrow(lens, (1, 1), (3, 4))
+    check(model.content_bounds(lens) == (1, 1, 3, 4),
+          f"按内容贴合算出来的是内容包围盒 {model.content_bounds(lens)}")
+    try:
+        model.set_view(lens, 5, 5, 4, 4, 7)
+        check(False, "镜头伸出棋盘时应该拒绝")
+    except ValueError as exc:
+        check("伸出棋盘" in str(exc), f"镜头伸出棋盘会被拒绝（{exc}）")
+    try:
+        model.set_view(lens, 0, 0, 0, 3, 7)
+        check(False, "镜头宽高为 0 时应该拒绝")
+    except ValueError as exc:
+        check("正数" in str(exc), f"镜头宽高必须是正数（{exc}）")
+    model.set_view(lens, 1, 1, 3, 4, 7)
+    check(model.view_of(lens) == (1, 1, 3, 4), "能设上镜头")
+    check(not model.content_outside_view(lens), "内容都在镜头里时不报「看不见」")
+    model.set_view(lens, 1, 1, 2, 2, 7)
+    check(bool(model.content_outside_view(lens)), "有东西落在镜头外时列得出来（只提醒、不拦）")
+    inherited = model.new_frame_like(lens)
+    check(model.view_of(inherited) == (1, 1, 2, 2), "新建的帧沿用上一帧的镜头（不用每帧重框）")
+    model.clear_view(lens)
+    check(model.view_of(lens) is None, "能恢复成「按内容自动推」")
+    holder = kit.Demo(caption="镜头往返", size=7, frames=[
+        kit.Frame(text="一", view=kit.rect(0, 0, 4, 4)),
+        kit.Frame(text="二", view=kit.rect(2, 2, 3, 3), view_hold=True),
+    ])
+    source = codegen.render_module("from guide_demo_kit import Demo, Frame, rect\n\nSYMBOL = \"王\"\n",
+                                  [holder])
+    check("view=rect(0, 0, 4, 4)," in source and "view_hold=True," in source,
+          "镜头与「硬切」都会渲染进源码")
+    namespace: Dict[str, Any] = {"__name__": "probe_view"}
+    exec(compile(source, "<view.py>", "exec"), namespace)
+    again = list(namespace["demos"]())[0]
+    check(kit.dumps({"王": [again]}) == kit.dumps({"王": [holder]}),
+          "镜头渲染后再载入，数据一字不差")
+    check(codegen.render_module(codegen.split_header(source), [again]) == source,
+          "带镜头的模块再渲染一次结果相同（幂等）")
+
     print("-- 棋盘边长 --")
     model.set_size(demo, 8)
     check(demo.size == 8, "能改大棋盘")

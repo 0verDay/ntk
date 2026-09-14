@@ -41,7 +41,7 @@ _LEGACY_CUT = re.compile(r"^def demos\(\)", re.M)
 #: 可能从 guide_demo_kit 里 import 的名字（按这个顺序排 import 行）。
 #: 只有在这个名单里的名字才会被保留/补上——老版本用过的 `Phase`、`shots` 之类会被顺手清掉。
 _KIT_NAMES = [
-    "Demo", "Frame", "red", "green", "arrow",
+    "Demo", "Frame", "red", "green", "arrow", "rect",
     "ARROW_STYLES", "ARROW_STYLE_LABELS", "PIECE_SYMBOLS", "CAMPS",
     "DEFAULT_HOLD", "HIGHLIGHT_LABEL", "cells_of_pieces", "point", "points", "DemoError",
 ]
@@ -135,6 +135,12 @@ def _render_frame(frame: Frame, indent: str) -> List[str]:
         for item in frame.arrows:
             lines.append(f"{inner}    {_render_arrow(item)},")
         lines.append(f"{inner}],")
+    if frame.view is not None:
+        # 镜头：rect(x, y, 宽, 高)。不写就是「按这一帧的内容自动推」。
+        x, y, w, h = (int(value) for value in frame.view)
+        lines.append(f"{inner}view=rect({x}, {y}, {w}, {h}),")
+        if frame.view_hold:
+            lines.append(f"{inner}view_hold=True,")
     lines.append(f"{indent}),")
     return lines
 

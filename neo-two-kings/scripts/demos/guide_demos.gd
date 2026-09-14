@@ -16,6 +16,8 @@ extends RefCounted
 ##       pieces:     {"x,y": [兵种字, "red"|"green"]},
 ##       highlights: [[x, y], ...],
 ##       arrows:     [{from: [x, y], to: [x, y], style: "move"|"shot"|"hop"}],
+##       view:       [x, y, w, h],              # 可选：这一帧的镜头（不写就按内容自动推）
+##       view_hold:  true,                      # 可选：换到这一帧时视口硬切、不做过渡
 ##   }
 ##
 ## `build()` 把一份剧本变成绘制层要的帧列表（纯数据，不含节点）：
@@ -23,6 +25,8 @@ extends RefCounted
 ##   state      Dictionary[Vector2i -> PieceInfo]  这一帧画出来的棋子
 ##   highlight  Dictionary[Vector2i -> String]     高亮的格子
 ##   arrows     Array[Dictionary]                  {from: Vector2i, to: Vector2i, kind: String}
+##   view       Rect2i                              这一帧的镜头（像素绘制时只画这里面）
+##   view_hold  bool                                换帧时视口是否硬切
 ##   text       String                             棋盘下方那句话
 ##   hold       float                              这一帧停多久（秒）
 
@@ -65,7 +69,7 @@ static func load_demos(path: String = SCRIPTS_PATH) -> Dictionary:
 			continue
 		for index in range((list as Array).size()):
 			var problems: Array = []
-			var demo := _decode_demo((list as Array)[index], str(symbol), problems)
+			var demo := decode_demo((list as Array)[index], str(symbol), problems)
 			if problems.is_empty() and not demo.is_empty():
 				decoded.append(demo)
 				continue
@@ -97,6 +101,8 @@ static func build(demo: Dictionary) -> Array:
 			"state": frame.get("state", {}),
 			"highlight": frame.get("highlight", {}),
 			"arrows": frame.get("arrows", []),
+			"view": frame.get("view", Rect2i()),
+			"view_hold": bool(frame.get("view_hold", false)),
 			"text": str(frame.get("text", "")),
 			"hold": hold,
 			# 棋盘边长也带进每一帧：绘制层要靠它算画布范围（见 bounds_of），
@@ -104,6 +110,31 @@ static func build(demo: Dictionary) -> Array:
 			"board_size": size,
 		})
 	return frames
+
+
+# --- 显示范围（镜头看哪几格）---
+
+## 这一帧的镜头范围（格子坐标）。作者写了 `view` 就用它，没写则由内容自动推。
+##
+## 自动推的规则：这一帧的「棋子 + 高亮 + 箭头两端」的包围盒——没有外圈留白，
+## 外圈是画布那一层的事（见 canvas_of）。这一帧空着（比如「撤走」之后什么都没了）时
+## 返回空 Rect2i，调用方应当「保持上一帧的镜头不动」而不是跳回整块棋盘。
+static func view_of(frame: Dictionary) -> Rect2i:
+	var explicit: Variant = frame.get("view")
+	if explicit is Rect2i and (explicit as Rect2i).size.x > 0 and (explicit as Rect2i).size.y > 0:
+		return explicit
+	return frame_bounds(frame)
+
+
+## 这一帧是不是「作者写死了镜头」。注意空 Rect2i 不算——那只是「没写」的占位。
+static func has_view(frame: Dictionary) -> bool:
+	var explicit: Variant = frame.get("view")
+	return explicit is Rect2i and (explicit as Rect2i).size.x > 0 and (explicit as Rect2i).size.y > 0
+
+
+## 换到这一帧时，镜头要不要**硬切**（true）而不是滑过去（false）。
+static func view_hold(frame: Dictionary) -> bool:
+	return bool(frame.get("view_hold", false))
 
 
 # --- 画布范围（棋盘逐帧缩放用）---
@@ -132,10 +163,15 @@ static func frame_bounds(frame: Dictionary) -> Rect2i:
 	return Rect2i(min_cell, max_cell - min_cell + Vector2i.ONE) if touched else Rect2i()
 
 
-## 整段动画要用的**画布**范围：所有帧的并集，再向外留一圈空白（已经贴着棋盘边的那侧不多留）。
+## 整段动画要用的**画布**范围（也就是「舞台」）——所有帧镜头的并集，再向外留一圈空白
+## （已经贴着棋盘边的那侧不多留）。
 ##
-## 画布按整段最大的那一次定死、不逐帧变：画布尺寸决定排版，它一变卡片里的文字就会跟着抖。
-## 棋盘在画布内部逐帧缩放（见 frame_bounds 与 GuideDemo 的 _shown_bounds）。
+## 作者给某一帧写了 `view` 时，这里**只用这些写死的视口**算并集：写小一点的视口不会让舞台跟着缩，
+## 舞台只由最大的那个视口决定，所以「这一帧把镜头收窄了」表现出来是画面在舞台里变小，
+## 而不是整块卡片跟着变尺寸。一帧都没写 view 时，走的就是原来的自动推导（见 canvas_of）。
+##
+## 画布按整段定死、不逐帧变：画布尺寸决定排版，它一变卡片里的文字就会跟着抖。
+## 棋盘在画布内部逐帧缩放（见 GuideDemo 的 _shown_bounds）。
 static func bounds_of(frames: Array, board_size: int = 0) -> Rect2i:
 	# 没显式给棋盘边长时，用帧里带的那一个（build() 会写进去）
 	if board_size <= 0:
@@ -147,8 +183,8 @@ static func bounds_of(frames: Array, board_size: int = 0) -> Rect2i:
 	var max_cell := Vector2i(-1, -1)
 	var touched := false
 	for frame in frames:
-		var frame_rect := frame_bounds(frame)
-		if frame_rect.size.x <= 0:
+		var frame_rect := view_of(frame)
+		if frame_rect.size.x <= 0 or frame_rect.size.y <= 0:
 			continue
 		min_cell = Vector2i(
 			mini(min_cell.x, frame_rect.position.x), mini(min_cell.y, frame_rect.position.y)
@@ -173,6 +209,35 @@ static func bounds_of(frames: Array, board_size: int = 0) -> Rect2i:
 	min_cell = Vector2i(maxi(min_cell.x, 0), maxi(min_cell.y, 0))
 	max_cell = Vector2i(mini(max_cell.x, board_size - 1), mini(max_cell.y, board_size - 1))
 	return Rect2i(min_cell, max_cell - min_cell + Vector2i.ONE)
+
+
+## 这一整段要用的**舞台**大小（每个帧的镜头都得放得进它）。
+##
+## 与 bounds_of 的区别只有一处，也是作者写了 `view` 之后唯一会变的规矩：
+##
+##   * 有任意一帧写了 `view` → 舞台 = 这些视口尺寸的**最大值**（位置一律从 (0,0) 起算）。
+##     视口比舞台小的帧，由绘制层**居中**放进去——所以改 view 的 x/y 是平移镜头，
+##     改 w/h 是改变镜头张开的范围，舞台本身不会跳。
+##   * 一帧都没写 `view` → 退回原来的自动推导（所有帧内容的并集 + 每侧留一圈，见 bounds_of）。
+##
+## 「舞台取最大」而不是「每个视口各算一个舞台」是刻意的：舞台尺寸一变，卡片里的文字排版
+## 就会跟着重排、看起来在抖（这是踩过的坑，别再改成逐帧变）。
+static func canvas_of(frames: Array, board_size: int = 0) -> Rect2i:
+	if board_size <= 0:
+		board_size = int((frames[0] as Dictionary).get("board_size", 7)) if not frames.is_empty() else 7
+	var max_span := Vector2i.ZERO
+	var has_explicit := false
+	for frame in frames:
+		if not has_view(frame):
+			continue
+		var rect := view_of(frame)
+		has_explicit = true
+		max_span = Vector2i(maxi(max_span.x, rect.size.x), maxi(max_span.y, rect.size.y))
+	if not has_explicit:
+		return bounds_of(frames, board_size)
+	if max_span.x <= 0 or max_span.y <= 0:
+		return Rect2i(Vector2i.ZERO, Vector2i(board_size, board_size))
+	return Rect2i(Vector2i.ZERO, max_span)
 
 
 # --- 读文件 ---
@@ -201,7 +266,10 @@ static func _read_json(path: String) -> Variant:
 
 # --- 解码：JSON → 绘制层要的帧 ---
 
-static func _decode_demo(raw: Variant, symbol: String, problems: Array) -> Dictionary:
+## 把 JSON 里的**一段**剧本解成 `{caption, size, frames}`；读不出来的地方写进 `problems`
+## （调用方拿它决定是整段跳过还是照用）。`load_demos` 与测试都走这里，所以「JSON 的键名」
+## 与「build() 要的键名」这两层之间的翻译只有这一处（pieces→state、highlights→highlight、style→kind）。
+static func decode_demo(raw: Variant, symbol: String, problems: Array) -> Dictionary:
 	if not (raw is Dictionary):
 		problems.append("这一段的写法不是一个对象")
 		return {}
@@ -269,13 +337,45 @@ static func _decode_frame(source: Dictionary, size: int, where: String, problems
 	if text.strip_edges().is_empty():
 		problems.append("%s 没有写 text（空白帧就是观众只看到棋盘在动）" % where)
 
+	var view := Rect2i()
+	var raw_view: Variant = source.get("view")
+	if raw_view != null:
+		view = _view_rect(raw_view, size, where, problems)
+
 	return {
 		"state": state,
 		"highlight": highlight,
 		"arrows": arrows,
+		"view": view,
+		"view_hold": bool(source.get("view_hold", false)),
 		"text": text,
 		"hold": float(source.get("hold", 0.0)),
 	}
+
+
+## `[x, y, w, h]` → Rect2i。写坏了只报错并返回空（空 = 这一帧还是按内容自动推）。
+static func _view_rect(value: Variant, size: int, where: String, problems: Array) -> Rect2i:
+	if not (value is Array) or (value as Array).size() != 4:
+		problems.append("%s 的 view 要写成 [x, y, 宽, 高]（左上角 + 格子数），收到 %s" % [where, str(value)])
+		return Rect2i()
+	var parts: Array = value
+	for item in parts:
+		if not _is_number(item):
+			problems.append("%s 的 view 里有不是数字的项：%s" % [where, str(value)])
+			return Rect2i()
+	var origin := Vector2i(int(parts[0]), int(parts[1]))
+	var span := Vector2i(int(parts[2]), int(parts[3]))
+	if span.x <= 0 or span.y <= 0:
+		problems.append("%s 的 view 宽高必须是正数（收到 %d×%d）——它是格子数，不是右下角坐标" % [
+			where, span.x, span.y,
+		])
+		return Rect2i()
+	if origin.x < 0 or origin.y < 0 or origin.x + span.x > size or origin.y + span.y > size:
+		problems.append("%s 的 view [%d, %d, %d, %d] 超出了 %d×%d 棋盘" % [
+			where, origin.x, origin.y, span.x, span.y, size, size,
+		])
+		return Rect2i()
+	return Rect2i(origin, span)
 
 
 static func _piece_from_entry(entry: Variant, where: String, key: String, problems: Array) -> PieceInfo:
