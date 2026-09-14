@@ -23,7 +23,7 @@
 ⚠ 棋盘 7×7 是对局尺寸；动作只占左上角 3×3 那一小块，画布也只裁到这么大。
 """
 
-from guide_demo_kit import Demo, Frame, red, green, arrow
+from guide_demo_kit import Demo, Frame, red, green, arrow, rect
 
 SYMBOL = "步"
 
@@ -31,11 +31,11 @@ SYMBOL = "步"
 def demos():
     return [
         Demo(
-            caption="步的杀伤靠队列厚度：身后连得越长，越能压过对面",
+            caption="步的攻击为叠加攻击",
             size=7,
             frames=[
                 Frame(
-                    text="两枚红步并排在第 1 行，绿步还隔着两格——这一步谁都打不到谁",
+                    text="步兵需要其他单位协助以发动攻击",
                     pieces={
                         (1, 1): red("步"),
                         (2, 1): red("步"),
@@ -43,7 +43,7 @@ def demos():
                     },
                 ),
                 Frame(
-                    text="步八方向走一格到空格：正下方那格 (2,2) 是空的",
+                    text="步向下方移动一格",
                     pieces={
                         (1, 1): red("步"),
                         (2, 1): red("步"),
@@ -55,8 +55,7 @@ def demos():
                     ],
                 ),
                 Frame(
-                    text="步打 3×3 内每个敌人，比的是「身后连着的同阵营棋子」谁更多",
-                    hold=1.2,
+                    text="这条斜向连接线上，有两个红方和一个绿方",
                     pieces={
                         (1, 1): red("步"),
                         (2, 2): red("步"),
@@ -67,12 +66,12 @@ def demos():
                     ],
                 ),
                 Frame(
-                    text="我方身后 1 枚红步、敌方身后 0 枚——1 : 0，绿步被击杀",
-                    hold=0.8,
+                    text="红多，故击杀绿方",
                     pieces={
                         (1, 1): red("步"),
                         (2, 2): red("步"),
                     },
+                    view=rect(1, 1, 3, 3),
                 ),
             ],
         ),

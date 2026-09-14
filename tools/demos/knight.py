@@ -36,7 +36,7 @@
   文案里的红骑与绿敌全对不上。现在阵营是显式写的，不会再有这个坑，但也**没人替你检查**了。
 """
 
-from guide_demo_kit import Demo, Frame, red, green, arrow
+from guide_demo_kit import Demo, Frame, red, green, arrow, rect
 
 SYMBOL = "骑"
 
@@ -44,19 +44,20 @@ SYMBOL = "骑"
 def demos():
     return [
         Demo(
-            caption="骑的连跳：越过棋子落到它正后方，一跳再跳",
+            caption="骑可跳跃移动",
             size=7,
             frames=[
                 Frame(
-                    text="红骑在 (4,2)：斜下方 (3,1) 是红步（跳板），斜上方 (1,1) 是绿步（敌人）",
+                    text="跳跃需要找架子，若架子后方为空格则可跳跃",
                     pieces={
                         (1, 1): green("步"),
                         (3, 1): red("步"),
                         (4, 2): red("骑"),
                     },
+                    view=rect(0, 0, 5, 3),
                 ),
                 Frame(
-                    text="两段箭头：先越过 (3,1) 落到 (2,0)，再越过 (1,1) 落到 (0,2)",
+                    text="一个回合内可多次跳跃",
                     pieces={
                         (1, 1): green("步"),
                         (3, 1): red("步"),
@@ -69,7 +70,7 @@ def demos():
                     ],
                 ),
                 Frame(
-                    text="骑落在 (0,2)，紧邻着 (1,1) 的敌人——但它打不动：敌人背后那一格 (2,0) 已经空了",
+                    text="骑跳跃两次",
                     pieces={
                         (0, 2): red("骑"),
                         (1, 1): green("步"),
@@ -79,19 +80,20 @@ def demos():
             ],
         ),
         Demo(
-            caption="骑的夹击：敌人背后有自己的子，才能借上力",
+            caption="骑可夹击敌人",
             size=7,
             frames=[
                 Frame(
-                    text="红骑在 (1,0)：绿步 (1,1) 就在正下方挨着，可骑自己够不着它",
+                    text="当一个敌方单位的某个方向有骑，其相反方向有骑同一阵营的单位时，会被骑夹击",
                     pieces={
                         (1, 0): red("骑"),
                         (1, 1): green("步"),
                         (2, 2): red("步"),
                     },
+                    view=rect(0, 0, 3, 3),
                 ),
                 Frame(
-                    text="骑八方向走一格到空格：左边 (0,0) 是空的",
+                    text="骑按正常移动逻辑向左一格",
                     pieces={
                         (1, 0): red("骑"),
                         (1, 1): green("步"),
@@ -103,7 +105,7 @@ def demos():
                     ],
                 ),
                 Frame(
-                    text="骑 → 敌 (1,1) 的下一个格子是 (2,2)，那里站着红步；顶着敌人的是自己人",
+                    text="骑夹击敌人",
                     hold=1.2,
                     pieces={
                         (0, 0): red("骑"),
@@ -112,11 +114,11 @@ def demos():
                     },
                     arrows=[
                         arrow((0, 0), (1, 1), "shot"),
+                        arrow((2, 2), (1, 1), "shot"),
                     ],
                 ),
                 Frame(
-                    text="「骑 → 敌」方向的后一格站着自己人 → 借力击杀 (1,1) 的绿步",
-                    hold=0.8,
+                    text="将敌人击杀",
                     pieces={
                         (0, 0): red("骑"),
                         (2, 2): red("步"),
