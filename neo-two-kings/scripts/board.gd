@@ -10,7 +10,14 @@ extends Control
 ## 格子不填色，只画蓝色格线与外框。
 
 ## 点击某个格子时发出，参数为格子坐标。
+##
+## 注意这是**松手时**才发出的：先按住看棋子卡片属于长按，
+## 只有「按下后很快在同一格松手」才算点击，两种手势因此不会互相干扰。
 signal cell_clicked(col: int, row: int)
+## 长按某个格子达到 long_press_duration 时发出。
+signal cell_long_pressed(col: int, row: int)
+## 长按结束（松手，或指针移出原格）时发出。
+signal cell_long_press_ended
 
 ## 棋盘边长上的格子数。
 @export_range(2, 16, 1) var board_size: int = 7
@@ -22,6 +29,8 @@ signal cell_clicked(col: int, row: int)
 @export var frame_width: float = 4.0
 ## 棋子死亡渐隐时长（秒）；设为 0 则立即消失。
 @export_range(0.0, 2.0, 0.05) var death_fade_duration: float = Piece.DEATH_FADE_DURATION
+## 按住多久算长按（秒）。
+@export_range(0.1, 2.0, 0.05) var long_press_duration: float = 0.4
 
 # 以下三项由 _update_geometry() 根据当前 size 计算。
 var _cell_size: float = 0.0
@@ -39,10 +48,20 @@ var _selected_cell := Vector2i(-1, -1)
 # 格子底色高亮（可移动格指示器）：格子坐标 Vector2i -> Color
 var _highlights: Dictionary = {}
 
+# --- 按压 / 长按状态 ---
+# 当前按住不放的格子；Vector2i(-1, -1) 表示没有按压
+var _press_cell := Vector2i(-1, -1)
+# 本次按压已经持续了多久（秒）
+var _press_elapsed := 0.0
+# 本次按压是否已经升级成长按
+var _long_pressed := false
+
 
 func _ready() -> void:
 	resized.connect(_on_resized)
 	mouse_exited.connect(_on_mouse_exited)
+	# 只有按住时才需要逐帧走表，平时把 _process 关掉
+	set_process(false)
 	queue_redraw()
 
 
@@ -55,6 +74,30 @@ func _on_resized() -> void:
 
 func _on_mouse_exited() -> void:
 	set_hovered_cell(Vector2i(-1, -1))
+	# 指针离开了棋盘，这次按压就作废（否则长按会在棋盘外继续倒计时）
+	_cancel_press()
+
+
+# --- 按压与长按 ---
+
+## 长按计时。只在按住期间由 set_process(true) 驱动。
+func _process(delta: float) -> void:
+	if _press_cell.x < 0 or _long_pressed:
+		return
+	_press_elapsed += delta
+	if _press_elapsed >= long_press_duration:
+		_long_pressed = true
+		cell_long_pressed.emit(_press_cell.x, _press_cell.y)
+
+
+## 松手统一在 _input 里收尾，而不是 _gui_input：
+## 按下之后指针完全可能拖到棋盘之外再松开，那样 release 根本不会送到本控件的 _gui_input，
+## 按压状态就会一直挂着（长按会继续倒计时、点击也永远发不出去）。
+func _input(event: InputEvent) -> void:
+	if _press_cell.x < 0:
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		_finish_press()
 
 
 # --- 几何 ---
@@ -334,9 +377,57 @@ func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		# 棋子 mouse_filter 为 IGNORE，所以鼠标划过棋子时事件仍然落到棋盘上
 		set_hovered_cell(local_to_cell(event.position))
+		# 按住期间挪到别的格子：这次按压作废（长按随之结束），避免误触
+		if _press_cell.x >= 0 and _hovered_cell != _press_cell:
+			_cancel_press()
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		var cell := local_to_cell(event.position)
 		if cell.x >= 0:
-			cell_clicked.emit(cell.x, cell.y)
+			_begin_press(cell)
 			accept_event()
+
+
+func _begin_press(cell: Vector2i) -> void:
+	_press_cell = cell
+	_press_elapsed = 0.0
+	_long_pressed = false
+	set_process(true)
+
+
+## 松手：短按发 cell_clicked，长按只发 cell_long_press_ended。
+##
+## 这里不需要释放位置：指针一旦离开原格，motion 分支早就把按压取消掉了，
+## 所以能走到这儿就说明松手时指针还在按下的那一格上。
+func _finish_press() -> void:
+	if _press_cell.x < 0:
+		return
+	var cell := _press_cell
+	var was_long := _long_pressed
+	_clear_press()
+	if was_long:
+		cell_long_press_ended.emit()
+	else:
+		cell_clicked.emit(cell.x, cell.y)
+
+
+## 取消按压（指针移出原格或离开棋盘）：不发 cell_clicked，但长按要正常收尾。
+func _cancel_press() -> void:
+	if _press_cell.x < 0:
+		return
+	var was_long := _long_pressed
+	_clear_press()
+	if was_long:
+		cell_long_press_ended.emit()
+
+
+func _clear_press() -> void:
+	_press_cell = Vector2i(-1, -1)
+	_press_elapsed = 0.0
+	_long_pressed = false
+	set_process(false)
+
+
+## 当前是否正在长按某一格（供测试与调试查询）。
+func is_long_pressing() -> bool:
+	return _press_cell.x >= 0 and _long_pressed

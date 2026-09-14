@@ -16,6 +16,44 @@
 
 ---
 
+## 0.5 现在要做什么（本次迁移速查）
+
+> 本版新增了**聊天协议**（`chat`），服务端和客户端必须一起换新。
+> 服务器如果早就跑起来了（安全组 / 防火墙 / 常驻服务都配好了），照下面四步走即可；
+> 从零开始部署请接着看第 2~7 节。
+
+```powershell
+# ① 本机导出（会自动刷新全局类名缓存，产出 exports\NeoTwoKings.exe）
+powershell -ExecutionPolicy Bypass -File .\deploy\build-release.ps1
+
+# ② 把 exports\NeoTwoKings.exe 上传，覆盖服务器上的 C:\ntk\NeoTwoKings.exe
+#    默认是单文件导出，只传这一个就行；
+#    如果 exports\ 里同时出现了 NeoTwoKings.pck，那必须 .exe + .pck 一起传
+
+# ③ 在服务器上重启服务（NSSM 方案；用任务计划程序的话改成 Restart-ScheduledTask）
+cd C:\ntk\nssm\win64
+.\nssm.exe restart NeoTwoKingsServer
+
+# ④ 确认云端跑的确实是新版本：日志里必须有「协议：」这一行，且里面要有 chat
+Get-Content C:\ntk\logs\server.log -Tail 20
+#   期望看到：
+#   [服务端] 协议：create_room、join_room、start_game、move、chat、leave
+```
+
+> **手机版 APK 要单独在编辑器里导出。** `build-release.ps1 -Android` 目前会失败，
+> 因为 Android 预设没配发布密钥库（日志里是「找不到发布密钥库，无法导出」），
+> 而密钥库密码不适合写进脚本。请用编辑器：项目 → 导出 → Android → 填好密钥库后点「导出项目」。
+> `exports\` 里那个 9/14 09:07 的旧 APK 是**改动之前**的版本（没有聊天、没有指南、没有长按卡片），
+> 不要直接发给玩家。
+
+然后把**同一个** `NeoTwoKings.exe` 发给玩家（手机端发新导出的 APK）。
+玩家不换客户端也能正常对局，只是聊天会被锁掉并提示「需要更新服务端」。
+
+**验收**：自己开两个客户端，一端建房一端加入 → 房主点开始 → 双方各发一条聊天，
+两边都能看到对方的消息，就算迁移完成。
+
+---
+
 ## 1. 架构速览
 
 ```
@@ -324,18 +362,68 @@ Godot_v4.7.2-stable_win64_console.exe --headless --path <项目目录> `
 - [ ] 两台不同网络的机器各开一个客户端：一端创建房间、一端用房间号加入
 - [ ] 房主点「开始游戏」后双方都进入对局，**红方（房主）先手**
 - [ ] 各走一步，双方画面一致
+- [ ] 双方各发一条聊天，两边都能看到对方的消息
+- [ ] 服务端日志里「协议：」那一行含 `chat`
 
 ---
 
 ## 8. 更新服务端
 
+> **Windows 上不能直接覆盖正在运行的 exe**（会报「文件正被另一个进程使用」）。
+> 必须按「停 → 换 → 起」的顺序来，别只做 `restart`。
+
 ```powershell
-# 复制新的 NeoTwoKings.exe 覆盖 C:\ntk\NeoTwoKings.exe
-.\nssm.exe restart NeoTwoKingsServer
+cd C:\ntk\nssm\win64
+
+# ① 先停服务，否则下一步复制文件会被占用拒绝
+.\nssm.exe stop NeoTwoKingsServer
+
+# ② 覆盖 exe（远程桌面直接拖拽覆盖，或 scp / 宝塔面板上传）
+#    目标：C:\ntk\NeoTwoKings.exe
+#    单文件导出，没有 .pck 要一起传
+
+# ③ 起服务
+.\nssm.exe start NeoTwoKingsServer
+.\nssm.exe status NeoTwoKingsServer     # 期望 SERVICE_RUNNING
+
+# ④ 确认新版本已经生效（关键一步）
+Get-Content C:\ntk\logs\server.log -Tail 20
 ```
+
+### 怎么确认云端真的换了新版本
+
+服务端启动横幅会打印它认得的所有客户端消息种类：
+
+```
+[服务端] 已启动，监听 ws://0.0.0.0:27080
+[服务端] 棋盘 7 x 7，房主执红先手
+[服务端] 协议：create_room、join_room、start_game、move、chat、leave
+```
+
+**有没有 `chat` 就是判据**：没有就说明还在跑旧 exe（文件没覆盖成功、或者服务没重启）。
+
+> 顺带说：`netstat` 看到端口在监听**不能**证明是新版本——新旧服务端都监听同一个端口。
 
 > **更新会中断所有进行中的对局。** 房间表和对局状态全部存在内存里，没有任何持久化，
 > 服务端进程一停，所有房间立即消失。
+
+### 8.1 什么时候必须更新服务端
+
+**只要动过协议，服务端和客户端就必须一起换。** 判断方法很简单：看 `scripts/net/game_server.gd`
+的 `handle()` 里认得的 kind 有没有变化。
+
+截至 2026.9.14，必须成对升级的是**聊天功能**：
+
+| 组合 | 结果 |
+|---|---|
+| 新客户端 + 新服务端 | 聊天正常 |
+| 新客户端 + **旧服务端** | 服务端回「未知消息：chat」，客户端会把聊天输入框锁掉并提示「需要更新服务端」。**对局本身不受影响**，只是不能聊天 |
+| 旧客户端 + 新服务端 | 一切照旧（新服务端只是多认了一个 kind，旧客户端永远不会发它） |
+
+也就是说：**旧服务端不会把新客户端弄坏，但联机聊天用不了。** 要聊天就得按上面的命令重启服务端。
+
+> 之所以非得改服务端不可：客户端之间没有直连，拓扑是「客户端 ↔ 服务端」的星形，
+> 消息只能由服务端转发。这不是实现偷懒，是 WebSocketMultiplayerPeer 的拓扑决定的。
 
 ---
 
@@ -350,6 +438,7 @@ Godot_v4.7.2-stable_win64_console.exe --headless --path <项目目录> `
 | **无胜负判定** | 一方棋子被吃光后该方无子可动，回合会卡住（这是早期就存在的设计缺口，尚未补） |
 | **无 TLS** | 流量是明文的 `ws://` |
 | **硬编码服务器地址** | 换地址要重新导出客户端 |
+| **聊天不落库、无敏感词过滤、无限流** | 聊天只做长度截断（200 字）与换行清洗，然后原样转发；服务端不保存历史，退出对局即消失。**公网开放时请自行评估内容风险** |
 
 ---
 
@@ -363,6 +452,7 @@ Godot_v4.7.2-stable_win64_console.exe --headless --path <项目目录> `
 | | | `join_room` | `{code}` |
 | | | `start_game` | `{}` |
 | | | `move` | `{from:[x,y], to:[x,y]}` |
+| | | `chat` | `{text}` |
 | | | `leave` | `{}` |
 | 服务端 → 客户端 | `c_message` | `room_created` | `{code}` |
 | | | `joined` | `{code}` |
@@ -371,10 +461,23 @@ Godot_v4.7.2-stable_win64_console.exe --headless --path <项目目录> `
 | | | `room_closed` | `{reason}` |
 | | | `game_started` | `{camp, snapshot}` |
 | | | `state` | `{snapshot}` |
+| | | `chat` | `{text, camp}` |
 | | | `error` | `{reason}` |
 
 **快照格式**：`[棋盘边长, 当前回合, [[x, y, 兵种, 阵营], ...]]`
 其中兵种 `0=王 1=弓 2=骑 3=盾 4=步`，阵营 `0=红 1=绿`。
+
+**聊天约定**：
+
+- 服务端把消息**广播给房间里的双方，包括发送者自己**。客户端因此不本地抢先上屏，
+  一律等服务端回显——这样双方看到的顺序完全一致，和走子「服务端权威」是同一套逻辑。
+- 收发双方都调 `GameServer.sanitize_chat()`：换行/制表符压成空格、去首尾空白、截断到 200 字。
+  服务端不信任客户端输入，自己会再清洗一次。
+- 纯空白（或缺少 `text` 字段）的消息被**静默丢弃**：不广播也不回错，免得刷屏。
+- 不在房间里发聊天会收到 `error`。
+- 旧服务端对未知 kind 回的是 `未知消息：chat`，客户端据此判定聊天不可用。
+  这是一段过渡期的版本兼容垫片，等所有服务端都升级后可以从 `net.gd` 里删掉。
+
 
 服务端日志里能看到房间生命周期，排障时先看这几行：
 

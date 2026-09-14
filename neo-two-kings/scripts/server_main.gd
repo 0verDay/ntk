@@ -24,6 +24,9 @@ func _ready() -> void:
 		return
 	print("[服务端] 已启动，监听 ws://0.0.0.0:%d" % _port)
 	print("[服务端] 棋盘 %d x %d，房主执红先手" % [GameServer.BOARD_SIZE, GameServer.BOARD_SIZE])
+	# 这行是运维判据：升级服务端后看日志里有没有 chat，
+	# 就能确认云端跑的确实是新版本（详见 docs/server-deployment.md 第 8 节）。
+	print("[服务端] 协议：%s" % "、".join(PackedStringArray(GameServer.CLIENT_KINDS)))
 
 	# 回环自检：从本机连一次自己。
 	# 这一步能抓到一类静默故障——端口被别的程序以更具体的地址占用时，

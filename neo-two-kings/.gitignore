@@ -4,3 +4,6 @@
 
 # 导出产物：可由 export_presets.cfg 随时重新生成，且体积很大
 /exports/
+
+# 测试运行时产生的日志
+/tests/_logs/

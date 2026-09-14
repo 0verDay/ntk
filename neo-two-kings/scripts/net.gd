@@ -20,6 +20,11 @@ signal client_disconnected(reason: String)
 signal server_message(kind: String, payload: Dictionary)
 ## 服务端已就绪
 signal server_ready(port: int)
+## 服务端不认识聊天消息（旧版服务端），联机聊天不可用
+signal chat_unsupported
+
+## 连上的服务端最多缓存多少条聊天记录
+const CHAT_HISTORY_LIMIT := 200
 
 var role: Role = Role.NONE
 var connecting := false
@@ -39,6 +44,13 @@ var in_game := false
 var opponent_present := false
 ## 最近一次收到的局面快照
 var last_snapshot: Array = []
+## 本局收到的聊天记录，元素为 {"camp": int, "text": String}。
+## 和 last_snapshot 同样的道理：消息可能在场景切换途中到达，那时新场景还没 _ready、
+## 接不到信号，只能先存下来，等对局界面进场时补显示。
+var chat_history: Array = []
+## 联机聊天是否可用。连上旧版服务端（不认识 chat）后置为 false，
+## 这样界面能明确告诉玩家「要更新服务端」，而不是敲了字石沉大海。
+var chat_supported := true
 
 var _server: GameServer = null
 var _peer: MultiplayerPeer = null
@@ -132,6 +144,16 @@ func request_move(from: Vector2i, to: Vector2i) -> void:
 	_send_to_server("move", {"from": [from.x, from.y], "to": [to.x, to.y]})
 
 
+## 发送一条聊天消息。文本先按服务端的同一套规则清洗，空消息不发。
+## 自己的消息也等服务端回显（服务端会把消息广播给房间里的双方），
+## 这样双方看到的顺序完全一致——与本项目「服务端权威」的一贯做法相同。
+func send_chat(text: String) -> void:
+	var clean := GameServer.sanitize_chat(text)
+	if clean.is_empty():
+		return
+	_send_to_server("chat", {"text": clean})
+
+
 func leave_room() -> void:
 	if role == Role.CLIENT and not connecting:
 		_send_to_server("leave", {})
@@ -208,6 +230,20 @@ func _apply_server_message(kind: String, payload: Dictionary) -> void:
 			in_game = true
 		"state":
 			last_snapshot = payload.get("snapshot", [])
+		"chat":
+			chat_history.append({
+				"camp": payload.get("camp", PieceInfo.Camp.RED),
+				"text": str(payload.get("text", "")),
+			})
+			while chat_history.size() > CHAT_HISTORY_LIMIT:
+				chat_history.pop_front()
+		"error":
+			# 旧版服务端的默认分支回的就是「未知消息：<种类>」。据此判定对方不认识 chat，
+			# 让界面把聊天输入框锁掉并给出提示。新版服务端不会再发出这条消息。
+			# 这是一段一次性的版本兼容垫片，等所有服务端都升级后可以删掉。
+			if chat_supported and str(payload.get("reason", "")) == "未知消息：chat":
+				chat_supported = false
+				chat_unsupported.emit()
 
 
 # --- 连接事件 ---
@@ -254,6 +290,8 @@ func _reset_client() -> void:
 	in_game = false
 	opponent_present = false
 	last_snapshot = []
+	chat_history.clear()
+	chat_supported = true
 	connecting = false
 
 

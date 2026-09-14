@@ -1,7 +1,23 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/game.gd" id="1_game"]
 [ext_resource type="Script" path="res://scripts/board.gd" id="2_board"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_chat"]
+content_margin_left = 0.0
+content_margin_top = 0.0
+content_margin_right = 0.0
+content_margin_bottom = 0.0
+bg_color = Color(0.964706, 0.972549, 0.984314, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.121569, 0.372549, 0.815686, 0.25)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
 
 [node name="Game" type="Control"]
 layout_mode = 3
@@ -19,6 +35,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+mouse_filter = 2
 color = Color(1, 1, 1, 1)
 
 [node name="TurnLabel" type="Label" parent="."]
@@ -28,33 +45,118 @@ anchor_right = 1.0
 offset_top = 28.0
 offset_bottom = 80.0
 grow_horizontal = 2
+mouse_filter = 2
 theme_override_colors/font_color = Color(0.8, 0.184314, 0.14902, 1)
 theme_override_font_sizes/font_size = 32
 text = "红方回合"
 horizontal_alignment = 1
 
 [node name="BackButton" type="Button" parent="."]
-visible = false
 layout_mode = 1
-offset_left = 28.0
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -372.0
 offset_top = 28.0
-offset_right = 188.0
+offset_right = -212.0
 offset_bottom = 80.0
+grow_horizontal = 0
 theme_override_font_sizes/font_size = 22
 text = "返回主菜单"
 
-[node name="BoardMargin" type="MarginContainer" parent="."]
+[node name="ChatToggleButton" type="Button" parent="."]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -188.0
+offset_top = 28.0
+offset_right = -28.0
+offset_bottom = 80.0
+grow_horizontal = 0
+theme_override_font_sizes/font_size = 22
+text = "聊天"
+
+[node name="ContentMargin" type="MarginContainer" parent="."]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+mouse_filter = 2
 theme_override_constants/margin_left = 32
 theme_override_constants/margin_top = 96
 theme_override_constants/margin_right = 32
 theme_override_constants/margin_bottom = 32
 
-[node name="Board" type="Control" parent="BoardMargin"]
+[node name="BoardArea" type="MarginContainer" parent="ContentMargin"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="Board" type="Control" parent="ContentMargin/BoardArea"]
 layout_mode = 2
 script = ExtResource("2_board")
+
+[node name="ChatPanel" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 0
+offset_left = 952.0
+offset_top = 96.0
+offset_right = 1248.0
+offset_bottom = 688.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_chat")
+
+[node name="ChatMargin" type="MarginContainer" parent="ChatPanel"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
+
+[node name="ChatColumn" type="VBoxContainer" parent="ChatPanel/ChatMargin"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 8
+
+[node name="ChatHeader" type="HBoxContainer" parent="ChatPanel/ChatMargin/ChatColumn"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="ChatTitle" type="Label" parent="ChatPanel/ChatMargin/ChatColumn/ChatHeader"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.117647, 0.184314, 0.360784, 1)
+theme_override_font_sizes/font_size = 20
+text = "聊天"
+
+[node name="ChatCloseButton" type="Button" parent="ChatPanel/ChatMargin/ChatColumn/ChatHeader"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "收起"
+
+[node name="ChatLog" type="RichTextLabel" parent="ChatPanel/ChatMargin/ChatColumn"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_colors/default_color = Color(0.117647, 0.184314, 0.360784, 1)
+theme_override_font_sizes/normal_font_size = 16
+bbcode_enabled = true
+scroll_following = true
+selection_enabled = true
+
+[node name="ChatInputRow" type="HBoxContainer" parent="ChatPanel/ChatMargin/ChatColumn"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 8
+
+[node name="ChatInput" type="LineEdit" parent="ChatPanel/ChatMargin/ChatColumn/ChatInputRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "输入消息…"
+
+[node name="ChatSendButton" type="Button" parent="ChatPanel/ChatMargin/ChatColumn/ChatInputRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "发送"

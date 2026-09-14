@@ -119,19 +119,32 @@ static func _knight_reachable(board: Dictionary, from: Vector2i, board_size: int
 ## 也能让「击杀削弱敌方支援链，从而使另一枚棋子满足条件」的连锁反应传播开。
 ## 每轮至少移除一个棋子，所以必然终止。
 static func resolve_kills(board: Dictionary, board_size: int, camp: PieceInfo.Camp) -> Array[Vector2i]:
-	var working := board.duplicate()
 	var killed := {}
+	for round_targets in resolve_rounds(board, board_size, camp):
+		for cell in round_targets:
+			killed[cell] = true
+	var result: Array[Vector2i] = []
+	for cell in killed.keys():
+		result.append(cell)
+	return result
+
+
+## 与 resolve_kills 同一套迭代，但把每一轮的结果单独返回：[[本轮击杀的格子, ...], ...]。
+##
+## 每一轮内部是「同时生效」（同上），轮与轮之间有先后（上一轮的死亡会改变下一轮的算式）。
+## 指南里的演示靠它按轮播放连锁，因此不需要在演示层再写一遍结算——演示的每一轮
+## 就是 resolve_kills 真正跑的每一轮。
+static func resolve_rounds(board: Dictionary, board_size: int, camp: PieceInfo.Camp) -> Array:
+	var working := board.duplicate()
+	var rounds: Array = []
 	while true:
 		var round_targets: Array[Vector2i] = _collect_targets(working, board_size, camp)
 		if round_targets.is_empty():
 			break
 		for cell in round_targets:
-			killed[cell] = true
 			working.erase(cell)
-	var result: Array[Vector2i] = []
-	for cell in killed.keys():
-		result.append(cell)
-	return result
+		rounds.append(round_targets)
+	return rounds
 
 
 static func _collect_targets(board: Dictionary, board_size: int, camp: PieceInfo.Camp) -> Array[Vector2i]:
