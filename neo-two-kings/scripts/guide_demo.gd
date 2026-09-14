@@ -4,7 +4,7 @@ extends Control
 ## 指南里那张会动的棋盘：把 GuideDemos 算出来的帧画出来，并自动循环播放。
 ##
 ## 它只做三件事——画帧、用一个 Tween 推进进度、在别人看不见的时候停下来。
-## **不含任何棋规判断**：谁打谁、谁死、能走到哪，全部来自 GuideDemos（进而来自 rules.gd）。
+## **不含任何棋规判断，也不做任何演算**：画什么完全来自 GuideDemos（也就是 JSON 里写死的帧）。
 ##
 ## 配色与字形刻意和真实棋盘同一套来源（Piece.CAMP_COLORS、Board.line_color、
 ## PieceGuide 的三种文字色），所以改了棋盘主题，指南里的演示会跟着变，
@@ -17,23 +17,12 @@ extends Control
 const LINE_COLOR := Color("1f5fd0")
 const GRID_COLOR := Color("1f5fd0", 0.16)
 
-## 可走格的底色。
-const MOVE_COLOR := Color("1f5fd0", 0.13)
-const MOVE_DOT_COLOR := Color("1f5fd0", 0.40)
-## 剧本指定的格外高亮（王的王区等）。
+## 高亮的格子（作者在编辑器里点出来的那些）。
 const ZONE_COLOR := Color("f0a020", 0.16)
 const ZONE_BORDER_COLOR := Color("f0a020", 0.75)
-## 走子箭头的起格。
-const ORIGIN_COLOR := Color("1f5fd0", 0.22)
-## 弹道与它命中的格子。
+## 箭头的三种颜色：与编辑器里的「移动 / 攻击 / 跳跃」一一对应。
 const SHOT_COLOR := Color("d0402f", 0.85)
-const KILL_COLOR := Color("d0402f", 0.22)
-## 结算方此时发光。
-const ATTACKER_COLOR := Color("f0a020", 0.30)
-## 阵亡棋子的淡出比例与收尾缩小。
-const FADING_ALPHA := 0.30
-const FADING_SCALE := 0.82
-
+const HOP_COLOR := Color("7a5cd0", 0.9)
 ## 格线宽度（像素）。棋盘不画外框，见 _draw_grid()。
 const GRID_WIDTH := 1.0
 ## 棋子字号相对格宽的比例（与 Piece.FONT_RATIO 一致）。
@@ -69,8 +58,6 @@ const HEARTBEAT := 3600.0
 
 ## 当前正在播的帧列表。
 var _frames: Array = []
-## 需要淡出的格子（已死的 + 正在死的），由 GuideDemos.fading_cells 给出。
-var _fading: Dictionary = {}
 ## 当前这一帧的下标，以及它已经停了多久（秒）。
 var _index := 0
 var _elapsed := 0.0
@@ -110,11 +97,10 @@ func _ready() -> void:
 	call_deferred("_update_playing")
 
 
-## 载入一段演示（GuideDemos.build 的产物）并从头开始播。
+## 载入一段演示（GuideDemos.build 的产物：一堆「帧」）并从头开始播。
 ## 传空数组时这个控件不会画任何东西（测试用来确认「没剧本就什么都不画」）。
 func set_frames(frames: Array) -> void:
 	_frames = frames
-	_fading = GuideDemos.fading_cells(frames)
 	_canvas_bounds = GuideDemos.bounds_of(frames)
 	_index = 0
 	_elapsed = 0.0
@@ -209,12 +195,16 @@ func is_playing() -> bool:
 
 ## 跳到某帧（测试与调试用；正常播放走心跳与 _process）。
 ## 范围直接到位，不做过渡——跳帧是「给测试和调试用的瞬间跳转」。
+##
+## 这里也发 status_changed：正常播放是 _process 换帧时发的，跳帧若不发，
+## 棋盘下方那行字就会停在上一次的说明上（截图、调试时看着像 bug）。
 func goto_frame(index: int) -> void:
 	if _frames.is_empty():
 		return
 	_index = clampi(index, 0, _frames.size() - 1)
 	_elapsed = 0.0
 	_sync_bounds(get_current_frame(), true)
+	status_changed.emit(get_status_text())
 	queue_redraw()
 
 
@@ -389,11 +379,7 @@ func _draw() -> void:
 		return
 	var state: Dictionary = frame["state"]
 
-	# 可走格底色（与真实棋盘一样，画在格线之下）
-	for cell in frame.get("moves", []):
-		draw_rect(_cell_rect(cell), MOVE_COLOR, true)
-
-	# 剧本指定的格外高亮（王的王区、盾后那一格）
+	# 高亮的格子（作者在编辑器里点出来的），画在格线之下
 	var highlight: Dictionary = frame.get("highlight", {})
 	for cell in highlight.keys():
 		draw_rect(_cell_rect(cell), ZONE_COLOR, true)
@@ -402,23 +388,6 @@ func _draw() -> void:
 
 	for cell in highlight.keys():
 		draw_rect(_cell_rect(cell), ZONE_BORDER_COLOR, false, GRID_WIDTH * 2.0)
-
-	# 结算方发光
-	for cell in frame.get("attackers", []):
-		draw_rect(_cell_rect(cell), ATTACKER_COLOR, true)
-
-	# 本帧刚被击杀的格子：残影
-	for cell in frame.get("killed", []):
-		draw_rect(_cell_rect(cell), KILL_COLOR, true)
-
-	# 可走格上的小圆点
-	for cell in frame.get("moves", []):
-		draw_circle(_cell_center(cell), maxf(_cell * 0.07, 1.5), MOVE_DOT_COLOR)
-
-	# 走子箭头的起格
-	for cell in highlight.keys():
-		if str(highlight[cell]) == "origin":
-			draw_rect(_cell_rect(cell), ORIGIN_COLOR, true)
 
 	_draw_arrows(frame)
 	_draw_pieces(state)
@@ -448,6 +417,7 @@ func _draw_grid() -> void:
 		)
 
 
+## 箭头按样式上色：移动＝蓝、攻击＝红、跳跃＝紫（和编辑器里选的那三种一致）。
 func _draw_arrows(frame: Dictionary) -> void:
 	for arrow in frame.get("arrows", []):
 		var kind := str(arrow.get("kind", "shot"))
@@ -455,8 +425,8 @@ func _draw_arrows(frame: Dictionary) -> void:
 		var width := maxf(_cell * ARROW_WIDTH_RATIO, 1.6)
 		if kind == "move":
 			color = LINE_COLOR
-		elif kind == "zone":
-			color = ZONE_BORDER_COLOR
+		elif kind == "hop":
+			color = HOP_COLOR
 		_draw_arrow(_cell_center(arrow["from"]), _cell_center(arrow["to"]), color, width)
 
 
@@ -487,18 +457,11 @@ func _draw_pieces(state: Dictionary) -> void:
 	var font_size := int(roundf(_cell * GLYPH_RATIO))
 	for cell in state.keys():
 		var piece: PieceInfo = state[cell]
-		var fading := _fading.has(cell)
-		var alpha := FADING_ALPHA if fading else 1.0
 		var color: Color = Piece.CAMP_COLORS.get(piece.camp, Color.BLACK)
-		color.a = alpha
 		var center := _cell_center(cell)
 		var glyph_size := font.get_string_size(piece.symbol(), HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
-		var draw_size := font_size
-		if fading:
-			draw_size = int(roundf(float(font_size) * FADING_SCALE))
-			center = center + Vector2(0, (_cell * GLYPH_RATIO - float(draw_size)) * 0.15)
-		var baseline := center - glyph_size * 0.5 + Vector2(0, font.get_ascent(draw_size) * 0.5 + font.get_descent(draw_size) * 0.5)
-		draw_string(font, baseline, piece.symbol(), HORIZONTAL_ALIGNMENT_LEFT, -1, draw_size, color)
+		var baseline := center - glyph_size * 0.5 + Vector2(0, font.get_ascent(font_size) * 0.5 + font.get_descent(font_size) * 0.5)
+		draw_string(font, baseline, piece.symbol(), HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
 
 
 ## 棋盘下方那行说明变了就发这个信号。guide.gd 拿它更新一个普通 Label——
@@ -506,14 +469,11 @@ func _draw_pieces(state: Dictionary) -> void:
 signal status_changed(text: String)
 
 
-## 当前这一帧该显示在棋盘下方的说明：走子阶段用剧本给的走子说明，其余用结算说明。
+## 当前这一帧该显示在棋盘下方的说明（现在每帧就一句话）。
 func get_status_text() -> String:
 	var frame := get_current_frame()
 	if frame.is_empty():
 		return ""
-	var moves_text := str(frame.get("moves_text", ""))
-	if not (frame.get("moves") as Array).is_empty() and not moves_text.is_empty():
-		return moves_text
 	return str(frame.get("text", ""))
 
 

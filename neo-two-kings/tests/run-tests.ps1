@@ -5,10 +5,12 @@
 #      powershell -ExecutionPolicy Bypass -File .\tests\run-tests.ps1
 #      powershell -ExecutionPolicy Bypass -File .\tests\run-tests.ps1 -Godot "C:\D\GodotEngine\Godot_v4.7.2-stable_win64_console.exe"
 #
-#  三步：
-#      1. GameServer 纯逻辑协议测试（不需要服务端）
-#      2. 游玩界面行为测试（不需要服务端）
-#      3. 联机端到端测试（脚本自己起一个 headless 服务端再连它）
+#  步骤：
+#      0.   指南剧本一致性 + 编辑器自检（tools/demos/*.py ↔ data/guide_demos.json；需要 python，没装就跳过）
+#      1.   GameServer 纯逻辑协议测试（不需要服务端）
+#      1.5  指南演示（动态图）测试（纯逻辑 + 帧数据核对，不需要窗口）
+#      2.   游玩界面行为测试（真实窗口，会短暂弹窗两次）
+#      3.   联机端到端测试（脚本自己起一个 headless 服务端再连它）
 #
 #  全部通过时退出码为 0。
 #
@@ -37,6 +39,7 @@ function Say($m, $color = 'Gray') { Write-Host $m -ForegroundColor $color }
 function Step($n, $title) { Write-Host "`n=== $n. $title ===" -ForegroundColor Cyan }
 function Ok($m)  { Write-Host "  [通过] $m" -ForegroundColor Green }
 function Bad($m) { Write-Host "  [失败] $m" -ForegroundColor Red; $script:fail++ }
+function Warn($m) { Write-Host "  [注意] $m" -ForegroundColor Yellow }
 
 # --- 找到 Godot 可执行文件 ---
 if (-not $Godot) {
@@ -85,6 +88,38 @@ function Show-Result($result, $title) {
         Bad "$title（退出码是 0，但没看到测试汇总——多半是脚本没跑起来。完整日志：$($result.Log)）"
     } else {
         Bad "$title（退出码 $($result.Code)，完整日志：$($result.Log)）"
+    }
+}
+
+# --- 0. 指南剧本一致性（Python 工具）---
+# 指南演示的**唯一数据源**是仓库根的 tools/demos/*.py，游戏读的是导出出来的
+# neo-two-kings\data\guide_demos.json。两边不一致 = 改了剧本忘了导出，
+# 那第 1.5 步测的其实是旧剧本——测试再绿也不代表你改的那版是对的。
+# 没装 python 时只提醒不判红：这一步是「防忘记」，不是测试本身。
+Step 0 '指南剧本一致性（tools/demos/*.py → data/guide_demos.json）'
+$python = (Get-Command 'python' -ErrorAction SilentlyContinue).Source
+if (-not $python) { $python = (Get-Command 'py' -ErrorAction SilentlyContinue).Source }
+if (-not $python) {
+    Warn '没找到 python，跳过这一步（指南演示测试照常跑，只是不检查「改了剧本忘了导出」）'
+} else {
+    $exporter = Join-Path (Split-Path $proj -Parent) 'tools\export_guide_demos.py'
+    # 刻意不接管输出：让 Python 直接往控制台写，编码交给控制台自己
+    #（Windows PowerShell 5.1 的 cp936 与 pwsh 的 UTF-8 都能正确显示）。
+    & $python $exporter --check
+    if ($LASTEXITCODE -eq 0) {
+        Ok '剧本与 JSON 一致'
+    } else {
+        Bad '剧本与 JSON 不一致：跑一次 python tools\export_guide_demos.py 再重试'
+    }
+
+    # 编辑器自检：守住「可视化编辑器不会把剧本改坏」——磁盘上的模块必须已经是规范形式，
+    # 渲染→再载入必须一字不差。它不写磁盘，所以随便跑。
+    $editor_check = Join-Path (Split-Path $proj -Parent) 'tools\editor\selftest.py'
+    & $python $editor_check
+    if ($LASTEXITCODE -eq 0) {
+        Ok '编辑器自检通过（渲染往返不丢信息）'
+    } else {
+        Bad '编辑器自检没过：先跑 python tools\editor\selftest.py 看是哪一条'
     }
 }
 
