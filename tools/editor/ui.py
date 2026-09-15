@@ -1,21 +1,29 @@
 # -*- coding: utf-8 -*-
-"""指南动画编辑器的界面（Tkinter）。
+"""指南编辑器的界面（Tkinter）：一个窗口两个页签。
 
 打开方式：
 
     python tools/editor/editor.py
 
-界面就四块：左边是**帧列表**（每帧一行），中间是**棋盘**，右边是**属性**（文字、停留时间、
-这一帧的箭头），底下一条**状态栏**。
+**「动画」页签**（会动的棋盘）——界面就四块：左边是**帧列表**（每帧一行），中间是**棋盘**，
+右边是**属性**（文字、停留时间、这一帧的箭头），底下一条**状态栏**。
 
-工具只有三个（`摆子` / `箭头` / `高亮`），因为一帧就是一张画：
+工具只有四个（`摆子` / `箭头` / `高亮` / `镜头`），因为一帧就是一张画：
 
 * **摆子**：左键在格子上放当前选的棋子（先选兵种和红/绿），右键把那格擦掉。
 * **箭头**：左键点起点、再左键点终点就画出一条；右键＝取消这次的起点，
   或者删掉「起点或终点落在这格」的箭头。颜色由箭头样式决定（移动/攻击/跳跃）。
 * **高亮**：左键切换这一格的橙色高亮。
+* **镜头**：拖一个矩形＝这一帧只看这几格；右键＝恢复成按内容自动推。
 
 编辑器**完全不碰棋规**：棋子的阵营是你选的，箭头指向哪就是哪，谁死了就靠「下一帧别写它」。
+
+**「文字」页签**（指南正文）——左边列出全部页面（怎么玩 / 小标题 / 五种棋子 / 容易搞错的点），
+右边改这一页的字段与一条条正文。它编辑的是 `tools/guide_text.py`，保存时只重写那个文件的
+「剧本区」，文件开头的说明原样保留。
+
+两个页签各自保存自己的东西：动画写 `tools/demos/*.py` + `data/guide_demos.json`，
+文字写 `tools/guide_text.py` + `data/guide_text.json`；状态栏是共用的。
 """
 
 from __future__ import annotations
@@ -29,6 +37,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from editor import model
 from editor.model import Doc, Point, point_of
+from editor.text_model import TextDoc
+from editor.text_ui import TextPane
 
 # --------------------------------------------------------------------------------------
 # 配色：和 game 那边同一套来源（guide_demo.gd 的常量、piece.gd 的 CAMP_COLORS）
@@ -60,6 +70,10 @@ HELP = (
     "左键＝按当前工具操作，右键＝擦 / 删 / 取消　·　"
     "Ctrl+S 保存 · Ctrl+Z 撤销 · Ctrl+Y 重做 · Ctrl+R 重新载入 · Del 擦掉选中格里的棋子"
 )
+TEXT_HELP = (
+    "左边选页，右边改字段与一条条正文　·　"
+    "Ctrl+S 保存 · Ctrl+Z 撤销 · Ctrl+Y 重做 · Ctrl+R 重新载入"
+)
 
 PROPS_WIDTH = 320
 LEFT_WIDTH = 250
@@ -85,11 +99,12 @@ def style_label(style: str) -> str:
 
 
 class EditorApp:
-    """整个编辑器：持有 Doc（数据）+ 一堆控件。"""
+    """整个编辑器：持有 Doc（动画）与 TextDoc（文字）+ 一堆控件。"""
 
-    def __init__(self, root: tk.Tk, doc: Doc) -> None:
+    def __init__(self, root: tk.Tk, doc: Doc, text_doc: Optional[TextDoc] = None) -> None:
         self.root = root
         self.doc = doc
+        self.text_doc = text_doc if text_doc is not None else TextDoc()
         self.symbol = doc.symbols()[0]
         self.demo_index = 0
         self.frame_index = 0
@@ -113,9 +128,9 @@ class EditorApp:
         self.glyph_font = _pick_font(root, ["Microsoft YaHei UI", "Microsoft YaHei", "SimHei"], "TkDefaultFont", 20)
         self.small_font = _pick_font(root, ["Microsoft YaHei UI", "Microsoft YaHei", "SimHei"], "TkDefaultFont", 9)
 
-        root.title("NeoTwoKings 指南动画编辑器")
-        root.geometry("1240x780")
-        root.minsize(1150, 620)
+        root.title("NeoTwoKings 指南编辑器")
+        root.geometry("1240x800")
+        root.minsize(1150, 640)
         root.configure(bg=BG)
         self._build_style()
         self._build_ui()
@@ -139,9 +154,18 @@ class EditorApp:
         style.configure("Muted.TLabel", foreground=MUTED_COLOR, font=self.small_font)
 
     def _build_ui(self) -> None:
+        # 两个页签：动画（会动的棋盘）与文字（指南正文）。各管各的数据与保存，
+        # 状态栏与快捷键共用——快捷键按当前页签分流，见 _bind_keys 与 cmd_*。
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill="both", expand=True)
+        anim_page = ttk.Frame(self.notebook)
+        self.notebook.add(anim_page, text="  动画（会动的棋盘）  ")
+        text_page = ttk.Frame(self.notebook)
+        self.notebook.add(text_page, text="  文字（指南正文）  ")
+
         # 顶部两行：一行选兵种与动画，一行放命令。刻意不排成一行——一行按钮的请求宽度
         # 加起来会把窗口撑到屏幕外（第一版就是这么把右栏挤没的）。
-        top = ttk.Frame(self.root, padding=(10, 8, 10, 2))
+        top = ttk.Frame(anim_page, padding=(10, 8, 10, 2))
         top.pack(fill="x")
         ttk.Label(top, text="兵种", style="Head.TLabel").pack(side="left")
         self.piece_buttons: Dict[str, ttk.Button] = {}
@@ -160,7 +184,7 @@ class EditorApp:
         self.summary_label = ttk.Label(top, text="", style="Muted.TLabel")
         self.summary_label.pack(side="left", padx=12)
 
-        commands = ttk.Frame(self.root, padding=(10, 0, 10, 4))
+        commands = ttk.Frame(anim_page, padding=(10, 0, 10, 4))
         commands.pack(fill="x")
         for text, command in [("撤销", self.undo), ("重做", self.redo),
                               ("重新载入", self.reload), ("校验", self.validate_now)]:
@@ -169,7 +193,7 @@ class EditorApp:
         ttk.Label(commands, text="保存会写回 tools/demos/*.py 并刷新 data/guide_demos.json",
                   style="Muted.TLabel").pack(side="left", padx=6)
 
-        middle = ttk.Frame(self.root)
+        middle = ttk.Frame(anim_page)
         middle.pack(fill="both", expand=True, padx=10, pady=6)
         middle.columnconfigure(0, weight=0, minsize=LEFT_WIDTH)
         middle.columnconfigure(1, weight=1, minsize=460)
@@ -262,20 +286,55 @@ class EditorApp:
         self.props.bind("<Configure>",
                         lambda event: self.props_canvas.configure(scrollregion=self.props_canvas.bbox("all")))
 
-        # --- 底：状态栏 ---
+        # --- 文字页签：左边选页、右边改这一页 ---
+        self.text_pane = TextPane(text_page, self.text_doc, self._set_status, self._update_title,
+                                  self.body_font, self.glyph_font, self.small_font)
+
+        # --- 底：状态栏（两个页签共用）---
         bottom = ttk.Frame(self.root, padding=(10, 0, 10, 8))
         bottom.pack(fill="x")
         self.status = ttk.Label(bottom, text="", style="Muted.TLabel", anchor="w", justify="left", wraplength=940)
         self.status.pack(fill="x")
-        ttk.Label(bottom, text=HELP, style="Muted.TLabel", anchor="w", justify="left",
-                  wraplength=940).pack(fill="x")
+        self.help_label = ttk.Label(bottom, text=HELP, style="Muted.TLabel", anchor="w", justify="left",
+                                    wraplength=940)
+        self.help_label.pack(fill="x")
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+
+    def _on_tab_changed(self, _event: Any = None) -> None:
+        """换页签时换掉底下的快捷键提示（快捷键本身按页签分流，见 cmd_*）。"""
+        self.help_label.configure(text=TEXT_HELP if self._text_active() else HELP)
+        self._update_title()
+
+    def _text_active(self) -> bool:
+        """现在是不是「文字」页签（Notebook 里的第 2 页）。"""
+        try:
+            return self.notebook.index("current") == 1
+        except tk.TclError:  # pragma: no cover - 窗口正在销毁
+            return False
 
     def _bind_keys(self) -> None:
-        self.root.bind("<Control-s>", lambda event: self.save())
-        self.root.bind("<Control-z>", lambda event: self.undo())
-        self.root.bind("<Control-y>", lambda event: self.redo())
-        self.root.bind("<Control-r>", lambda event: self.reload())
-        self.root.bind("<Delete>", lambda event: self.delete_cell_content())
+        # Ctrl+S / Z / Y / R 与 Del 都按当前页签分流：在文字页签里按 Del 不该去擦棋盘的格子
+        self.root.bind("<Control-s>", lambda event: self.cmd_save())
+        self.root.bind("<Control-z>", lambda event: self.cmd_undo())
+        self.root.bind("<Control-y>", lambda event: self.cmd_redo())
+        self.root.bind("<Control-r>", lambda event: self.cmd_reload())
+        self.root.bind("<Delete>", lambda event: self.cmd_delete())
+
+    def cmd_save(self) -> None:
+        (self.text_pane.save if self._text_active() else self.save)()
+
+    def cmd_undo(self) -> None:
+        (self.text_pane.undo if self._text_active() else self.undo)()
+
+    def cmd_redo(self) -> None:
+        (self.text_pane.redo if self._text_active() else self.redo)()
+
+    def cmd_reload(self) -> None:
+        (self.text_pane.reload if self._text_active() else self.reload)()
+
+    def cmd_delete(self) -> None:
+        if not self._text_active():
+            self.delete_cell_content()
 
     # ------------------------------------------------------------------ 当前选中
 
@@ -307,7 +366,8 @@ class EditorApp:
             self.refresh_props()
 
     def _update_title(self) -> None:
-        self.root.title("NeoTwoKings 指南动画编辑器" + (" *" if self.dirty else ""))
+        dirty = self.dirty or self.text_pane.dirty
+        self.root.title("NeoTwoKings 指南编辑器" + (" *" if dirty else ""))
 
     def _refresh_all(self) -> None:
         self.refresh_frame_list()
@@ -521,6 +581,11 @@ class EditorApp:
                 x0, y0 = ox + point[0] * cell, oy + point[1] * cell
                 canvas.create_rectangle(x0, y0, x0 + cell, y0 + cell, fill=ZONE_COLOR, outline=ZONE_BORDER, width=2)
 
+            # 先画箭头、再画棋子——和游戏里同一个次序（game 那边 _draw 也是这个顺序）：
+            # 箭头两端就落在格心，压在棋子字上的那一段由棋子盖住，两边看到的才是同一张画。
+            for item in frame.arrows or []:
+                self._draw_arrow(point_of(item["from"]), point_of(item["to"]), str(item.get("style", "move")))
+
             ordered = sorted((frame.pieces or {}).items(), key=lambda kv: (point_of(kv[0])[1], point_of(kv[0])[0]))
             for key, value in ordered:
                 point = point_of(key)
@@ -528,9 +593,6 @@ class EditorApp:
                 canvas.create_text(cx, cy, text=str(value[0]),
                                    fill=CAMP_COLORS.get(str(value[1]), TEXT_COLOR),
                                    font=self.glyph_font if cell >= 26 else self.body_font)
-
-            for item in frame.arrows or []:
-                self._draw_arrow(point_of(item["from"]), point_of(item["to"]), str(item.get("style", "move")))
 
         # 镜头框画在所有内容之上：外面要压暗，里面才是这一帧真正会被看到的部分
         self._draw_view(frame, cell, ox, oy, size)
@@ -585,17 +647,12 @@ class EditorApp:
     def _draw_arrow(self, start: Point, end: Point, style: str) -> None:
         x0, y0 = self._cell_center(start)
         x1, y1 = self._cell_center(end)
-        cell, _, _ = self._board_geometry()
         color = ARROW_COLORS.get(style, ARROW_COLORS["move"])
-        # 两端让开一点，别压住棋子字（和游戏里的画法一致）
-        dx, dy = x1 - x0, y1 - y0
-        length = (dx * dx + dy * dy) ** 0.5
-        if length < 1e-3:
+        # 两端就落在格子的正中心（和游戏里的画法一致）：箭头压在棋子字上的那一段由棋子盖住，
+        # 所以这里不做任何缩进——缩进会让箭头看起来接不到格心。
+        if abs(x1 - x0) < 1e-3 and abs(y1 - y0) < 1e-3:
             return
-        inset = min(length * 0.2, cell * 0.34)
-        sx, sy = x0 + dx / length * inset, y0 + dy / length * inset
-        ex, ey = x1 - dx / length * inset, y1 - dy / length * inset
-        self.canvas.create_line(sx, sy, ex, ey, fill=color, width=3, arrow="last", arrowshape=(12, 14, 5))
+        self.canvas.create_line(x0, y0, x1, y1, fill=color, width=3, arrow="last", arrowshape=(12, 14, 5))
 
     # ------------------------------------------------------------------ 棋盘上的编辑
 
@@ -1033,14 +1090,15 @@ class EditorApp:
             self._set_status("没有可重做的了")
 
     def on_close(self) -> None:
-        if self.dirty and not messagebox.askyesno("退出", "有未保存的改动，确定退出？"):
+        if (self.dirty or self.text_pane.dirty) and not messagebox.askyesno("退出", "有未保存的改动，确定退出？"):
             return
         self.root.destroy()
 
 
 def run() -> int:
     doc = Doc()
+    text_doc = TextDoc()
     root = tk.Tk()
-    EditorApp(root, doc)
+    EditorApp(root, doc, text_doc)
     root.mainloop()
     return 0

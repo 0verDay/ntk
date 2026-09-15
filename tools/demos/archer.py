@@ -25,7 +25,7 @@
 ⚠ 棋盘 6×6 只是这张教具图的大小（`size`）；动作只占左上角几格。
 """
 
-from guide_demo_kit import Demo, Frame, red, green, arrow
+from guide_demo_kit import Demo, Frame, red, green, arrow, rect
 
 SYMBOL = "弓"
 
@@ -66,7 +66,6 @@ def demos():
                 ),
                 Frame(
                     text="攻击距离横竖为2斜向为1",
-                    hold=1.2,
                     pieces={
                         (1, 1): red("弓"),
                         (1, 2): red("盾"),
@@ -84,13 +83,13 @@ def demos():
                 ),
                 Frame(
                     text="敌军步兵被弓攻击阵亡",
-                    hold=0.8,
                     pieces={
                         (1, 1): red("弓"),
                         (1, 2): red("盾"),
                         (2, 1): red("盾"),
                         (2, 2): red("盾"),
                     },
+                    view=rect(1, 1, 4, 4),
                 ),
             ],
         ),

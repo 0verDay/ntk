@@ -554,11 +554,13 @@ func _make_guide_card_label(text: String, font_size: int, color: Color) -> Label
 	return label
 
 
+## 长按弹出的棋子卡片：底色和描边跟菜单面板（主题里的 MenuPanel）同一套。
+## 圆角保持 10、也不加投影——卡片开了 clip_contents，投影会被自己裁掉。
 func _make_guide_card_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.964706, 0.972549, 0.984314, 1)
+	style.bg_color = Color(0.968627, 0.976471, 0.988235, 1)
 	style.set_border_width_all(1)
-	style.border_color = Color(0.121569, 0.372549, 0.815686, 0.25)
+	style.border_color = Color(0.788235, 0.827451, 0.894118, 1)
 	style.set_corner_radius_all(10)
 	return style
 

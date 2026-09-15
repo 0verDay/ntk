@@ -14,9 +14,7 @@
 from __future__ import annotations
 
 import copy
-import os
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -29,7 +27,7 @@ if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
 import guide_demo_kit as kit  # noqa: E402  （必须在 sys.path 处理之后）
-from editor import codegen  # noqa: E402
+from editor import atomic, codegen  # noqa: E402
 
 Point = Tuple[int, int]
 #: 新建帧时写进 text 的占位说明（校验要求每帧都有文字，省得一建出来就是红的）。
@@ -329,7 +327,7 @@ class Doc:
         for path, source in sources.items():
             if path.read_text(encoding="utf-8") == source:
                 continue
-            _write_atomic(path, source)
+            atomic.write_text(path, source)
             notes.append(f"写入 {path.name}")
 
         if kit.write(JSON_PATH, self.demos):
@@ -351,16 +349,3 @@ class Doc:
 
 #: 兵种字 → 模块名（`tools/demos/<名字>.py`）。
 _MODULE_OF = {"王": "king", "弓": "archer", "骑": "knight", "盾": "shield", "步": "pawn"}
-
-
-def _write_atomic(path: Path, text: str) -> None:
-    """先写临时文件再替换：写一半崩掉也不会留下半个模块。"""
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(text)
-        os.replace(tmp, path)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise

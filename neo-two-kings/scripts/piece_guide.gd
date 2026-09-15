@@ -1,113 +1,106 @@
 class_name PieceGuide
 extends RefCounted
 
-## 棋子说明的**唯一数据源**：主菜单的「棋子指南」页面和游玩界面里的长按卡片都读这里。
+## 棋子指南的**门面**：界面代码（guide.gd 的页面、game.gd 的长按卡片）只问这里。
 ##
-## 只放文字与共用配色，不含任何节点与界面代码——想改措辞只动这一个文件。
-## 棋子的名字与显示字一律取自 PieceInfo.SYMBOLS，因此不可能和棋盘上的字对不上。
+## 指南有两样东西，各走一条「Python 工具 → data/*.json → 这里读」的流水线：
 ##
-## ⚠ 这里的描述必须与 rules.gd 保持一致。改棋规时请一并更新本文件。
-## ⚠ tests/test_menu_ui.gd 会检查每种棋子都确实有说明，并核对写的兵力与真实初始布局一致。
+##   纯文本（标题 / 摘要 / 一条条说明）
+##       tools/guide_text.py                    你改文案的地方
+##           ↓ python tools/export_guide_text.py
+##       data/guide_text.json                   游戏读它（别手改）
+##           ↓ GuideText.load_text()
+##       本文件的 INTRO_* / PIECE_NOTES / OUTRO_*  ← 界面要的那些字段
 ##
-## **演示（会动的棋盘）不在本文件里**，它是「纯动画」：每一帧画什么都在 tools/demos/*.py 里写死，
+##   演示（会动的棋盘）＝「纯动画」，每一帧画什么都在 Python 里写死
+##       tools/demos/*.py                       你写剧本的地方（棋子 / 关键帧 / 文字）
+##           ↓ python tools/export_guide_demos.py
+##       data/guide_demos.json                  游戏读它（别手改）
+##           ↓ GuideDemos.load_demos() → GuideDemos.build()
+##       帧列表 → GuideDemo 画出来（不跑棋规：画面上就是你摆的样子）
 ##
-##     tools/demos/*.py                     你写剧本的地方（棋子 / 关键帧 / 文字）
-##         ↓ python tools/export_guide_demos.py
-##     neo-two-kings/data/guide_demos.json  游戏读它（别手改）
-##         ↓ GuideDemos.load_demos() → GuideDemos.build()
-##     帧列表 → GuideDemo 画出来（不跑棋规：画面上就是你摆的样子）
+## ⚠ **本文件里一个字都不写**：想改措辞请改 tools/guide_text.py（跑一次导出），
+##    或者在 tools/editor 的「文字」页签里改。这里只做加载与检索。
+## ⚠ 文案必须与 rules.gd 保持一致。改棋规时把 tools/guide_text.py 一起改。
+## ⚠ tests/test_menu_ui.gd 会核对每种棋子都有说明，并核对「怎么玩」里写的兵力与真实初始布局一致。
+## ⚠ tests/test_guide_demos.gd 会核对每种棋子都配有演示。
 ##
-## 所以改演示请改 Python 并跑一次导出，这里不会再有手写剧本。
+## 棋子的名字与显示字一律取自 PieceInfo.SYMBOLS，所以不可能和棋盘上的字对不上。
 
-# --- 共用配色（指南页面与长按卡片保持一致） ---
+# --- 共用配色（指南页面与长按卡片保持一致；配色不是文案，留在代码里） ---
 const HEADING_COLOR := Color(0.117647, 0.184314, 0.360784)
 const BODY_COLOR := Color(0.223529, 0.254902, 0.317647)
 const ACCENT_COLOR := Color(0.121569, 0.372549, 0.815686)
 
-# --- 怎么玩 ---
-const INTRO_TITLE := "怎么玩"
-const INTRO_POINTS: Array[String] = [
-	"7×7 棋盘，红方在左上、绿方在右下。双方棋子完全相同：王×1、弓×2、骑×2、盾×2、步×2，各 9 枚。",
-	"双方轮流走子。走完一步会连续结算两次：先结算刚走子的一方（它的回合结束），再结算对方（它的回合开始）。",
-	"所以每个棋子在己方回合里有「走子前」「走子后」两个攻击窗口——对手走完一步，你的棋子其实已经先打了一轮。",
-	"结算同时生效：同一轮里算出的击杀一起结算，不会因为「先死的棋子让谁失去支援」而失效；只要还能算出新的击杀就继续往下结算，直到没人再死，连锁会一路传开。",
-	"吃子只有两条路：王走进敌方棋子所在的格子，以及结算时的击杀。除了王，其它棋子都只能走进空格。",
-]
+# --- 文案（_static_init 里从 data/guide_text.json 读进来，见文件开头的流水线） ---
+## 「怎么玩」那一页。
+static var INTRO_TITLE := ""
+static var INTRO_POINTS: Array[String] = []
+## 左栏「怎么玩」那张速查卡上的大字与一句话。
+static var INTRO_CARD_GLYPH := ""
+static var INTRO_CARD_SHORT := ""
+## 左栏里棋子卡上方的小标题。
+static var PIECES_TITLE := ""
+## 每种棋子的说明：`{kind, tagline, short, points}`（顺序就是指南里的顺序）。
+static var PIECE_NOTES: Array[Dictionary] = []
+## 「几个容易搞错的点」那一页。
+static var OUTRO_TITLE := ""
+static var OUTRO_POINTS: Array[String] = []
 
-# --- 五种棋子 ---
-const PIECES_TITLE := "五种棋子"
+## 加载时的问题（空 = 一切正常）。界面拿它在页面上把「文本没读出来」说清楚，
+## 而不是显示一页空白——文案全在 JSON 里，读不到就没有可显示的东西。
+static var _load_problem := ""
 
-## 每种棋子的说明。kind 用 PieceInfo.Kind，名字与显示字由 PieceInfo.SYMBOLS 提供。
-## 演示剧本由 demos_for() 从 data/guide_demos.json 取，见文件开头的说明。
-const PIECE_NOTES: Array[Dictionary] = [
-	{
-		"kind": PieceInfo.Kind.KING,
-		"tagline": "只能在自己角落的 2×2 里挪动，靠走上去直接吃子。",
-		"points": [
-			"移动：八方向走一格，但落点必须落在自己的王区里——红方是左上角 2×2，绿方是右下角 2×2，一共只有 4 格。",
-			"吃子：可以走进敌方棋子所在的格子并把它直接吃掉，这是全局唯一的「主动吃子」。",
-			"攻击结算：不参与。王没有远程攻击，它的吃子只发生在移动的瞬间。",
-			"要点：活动范围被锁死在 4 格里，被逼到边上就只能在原地附近打转；它本身没有任何额外保护，被吃掉的后果和其他棋子一样。",
-			"打法：贴上去就吃。王不需要炮架也不需要队列，唯一的门槛是它得走得到——所以王区之外的敌人，它一辈子都碰不到（见下面的演示）。",
-		],
-	},
-	{
-		"kind": PieceInfo.Kind.ARCHER,
-		"tagline": "借身边的友军当「炮架」，沿延长线把敌人射穿。",
-		"points": [
-			"攻击：看自己 3×3 范围内的每个相邻友军，每个友军给出一个射击方向，沿「弓 → 友军」的延长线射出。",
-			"射程：正交方向（上下左右）射程 2 格，斜向射程 1 格；都不包含被当炮架的那枚友军，它不会被自己人误伤。",
-			"命中：射程内的敌方棋子全部被击杀；空格和友军都不阻挡弹道。",
-			"阻挡：只有敌方的盾能挡住它后面的格子。若这面盾没被抵抗，它自己也会被击杀；结算会继续迭代，盾消失之后它后面的格子就不再被挡了。",
-			"移动：八方向走一格到空格——弓自己不能靠走子吃子。",
-			"要点：身边没有友军就完全没有输出，「一弓一友军」是最基本的攻击单元；换个友军站位就是换一个射界。",
-			"打法：摆位 → 走一步 → 一次结算双杀。走子本身不结算，所以关键那一步要先走到位，再让两个炮架在同一个回合里各射一条线——横着一条、斜着一条，射界完全不同（见下面的演示）。",
-		],
-	},
-	{
-		"kind": PieceInfo.Kind.KNIGHT,
-		"tagline": "能连跳着走位，也能借身后友军的力量击杀面前一格。",
-		"points": [
-			"移动①：八方向走一格到空格。",
-			"移动②：连跳——相邻格只要有棋子（敌我均可）挡着，就能越过它落到正后方那格；而且可以这样一跳再跳，一路连下去。",
-			"攻击：3×3 范围内的敌人，如果「骑 → 敌人」延长线上的后一格站着自己的友军，就击杀该敌人。",
-			"要点：跳跃只影响移动、不影响攻击。骑的攻击射程只有紧邻的一格，背后没有友军顶着就打不出伤害。",
-			"打法：跳跃用来走位、夹击用来吃子，两件事分开算。走位时把棋子当成「跳板」，吃子时把敌人当成「夹心」——它背后那一格才是关键（见下面两段演示）。",
-		],
-	},
-	{
-		"kind": PieceInfo.Kind.SHIELD,
-		"tagline": "自己不打人，靠站位给身后的友军挡刀。",
-		"points": [
-			"攻击：没有攻击能力，永远不会主动击杀任何棋子。",
-			"抵抗：当敌人的攻击对象就是这面盾时，沿攻击方向越过盾之后的紧邻一格如果站着自己的友军，这次攻击就被抵抗掉——盾不会死（但弓的弹道仍然被它挡住）。对步的对拼、弓的射击、骑的借力攻击都生效。",
-			"阻挡：弓的射击会被盾挡住，盾后面的格子打不到。",
-			"移动：八方向走一格到空格。",
-			"要点：盾的价值全在「和谁站成一条线」。它保护的是身后那一枚棋子，不是整条线；身后空着的盾等于白挨打。",
-			"打法：让敌人来打盾，而不是让盾去打人。身后紧接着一枚自己人时，敌人这一发既打不死盾、也穿不过去（见下面的演示，两段只差身后那一格）。",
-		],
-	},
-	{
-		"kind": PieceInfo.Kind.PAWN,
-		"tagline": "靠身后的队列厚度「比大小」，吃掉面前的敌人。",
-		"points": [
-			"攻击：对 3×3 范围内的每个敌人单独判定。沿「步 → 敌人」方向，先数步身后连续友军的数量，再数敌人身后连续友军的数量——己方多就击杀，相等或更少则不触发。",
-			"一次结算里可以同时击杀多个敌人，每个方向各算各的。",
-			"移动：八方向走一格到空格。步不能靠走上去吃子，只能靠结算击杀。",
-			"要点：排成一条长队才有杀伤力；被盾抵抗时这次对拼直接作废。",
-			"打法：走一格 → 队列一厚就吃子。走子本身不结算，所以关键那一步要先走到位：落点顶上敌人，同时让身后有一列自己人（见下面的演示）。",
-		],
-	},
-]
 
-# --- 容易搞错的点 ---
-const OUTRO_TITLE := "几个容易搞错的点"
-const OUTRO_POINTS: Array[String] = [
-	"「结算」不等于「走子」：走子是动一枚棋子，结算是某一方所有棋子一起开火，两者是分开的两件事。",
-	"盾的抵抗只看「越过盾之后的紧邻那一格」有没有自己人，所以把盾放到队伍里才有效，单独杵在前面没用。",
-	"弓的炮架必须是相邻的友军（3×3 内），隔一格就不算；但射程本身可以覆盖到 2 格外的敌人。",
-	"胜负：当前版本还没有自动判定。某一方棋子被吃光后该方无子可动，对局会停在那里（这是已知缺口，尚未补）。",
-]
+## 脚本第一次被用到时读一次 JSON（读一次就留在 static 变量里，之后只是取字段）。
+static func _static_init() -> void:
+	var problems: Array = []
+	var loaded := GuideText.load_text(GuideText.TEXT_PATH, problems)
+	INTRO_TITLE = str(loaded.get("intro_title", ""))
+	INTRO_POINTS = _strings(loaded.get("intro_points"))
+	INTRO_CARD_GLYPH = str(loaded.get("intro_card_glyph", ""))
+	INTRO_CARD_SHORT = str(loaded.get("intro_card_short", ""))
+	PIECES_TITLE = str(loaded.get("pieces_title", ""))
+	PIECE_NOTES = _notes(loaded.get("pieces"))
+	OUTRO_TITLE = str(loaded.get("outro_title", ""))
+	OUTRO_POINTS = _strings(loaded.get("outro_points"))
+
+	_load_problem = _join_problems(problems)
+	if not _load_problem.is_empty():
+		# 日志里喊一嗓子：指南页面上也会把同一段话显示出来（见 guide.gd）
+		push_error("指南文本没读出来（页面上的文字都来自 data/guide_text.json）：\n%s" % _load_problem)
+
+
+## 读不动时字段会缺席，这里一律**复制成带类型的数组**再赋值：
+## 直接把 Dictionary.get() 的默认值 `[]` 赋给 Array[String] 会报「类型对不上」，
+## 而那正好发生在最需要它别出错的时候（JSON 没导出来）。
+static func _strings(value: Variant) -> Array[String]:
+	var out: Array[String] = []
+	if value is Array:
+		for item in (value as Array):
+			out.append(str(item))
+	return out
+
+
+static func _notes(value: Variant) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if value is Array:
+		for item in (value as Array):
+			if item is Dictionary:
+				out.append(item)
+	return out
+
+
+## 加载时的问题（空 = 没问题）。guide.gd 用它决定要不要在页面上放一条「没读出来」的提示。
+static func load_problem() -> String:
+	return _load_problem
+
+
+static func _join_problems(problems: Array) -> String:
+	var lines := PackedStringArray()
+	for problem in problems:
+		lines.append("・%s" % str(problem))
+	return "\n".join(lines)
 
 
 ## 取某种棋子的说明条目；没有对应条目时返回空字典。
@@ -117,6 +110,7 @@ static func note_for(kind: int) -> Dictionary:
 			return note
 	return {}
 
+
 ## 某种棋子的演示（会动的棋盘）剧本列表。
 ##
 ## 剧本来自 data/guide_demos.json（tools/export_guide_demos.py 从 tools/demos/*.py 生成）——
@@ -125,6 +119,7 @@ static func demos_for(kind: int) -> Array:
 	var demos: Array = all_demos().get(symbol_of(kind), [])
 	return demos
 
+
 ## 全部演示剧本 `{兵种字: Array[剧本]}`，按兵种字取。
 ## 第一次问的时候才去读文件，之后就吃缓存（读文件这一步在打开指南时只该发生一次）。
 static func all_demos() -> Dictionary:
@@ -132,6 +127,7 @@ static func all_demos() -> Dictionary:
 		_demos_loaded = true
 		_demos_by_symbol = GuideDemos.load_demos()
 	return _demos_by_symbol
+
 
 ## 剧本缓存与「读过没有」的标记。读失败时是空字典（演示全部缺席，其它照常）。
 static var _demos_by_symbol: Dictionary = {}

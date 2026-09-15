@@ -106,7 +106,6 @@ def demos():
                 ),
                 Frame(
                     text="骑夹击敌人",
-                    hold=1.2,
                     pieces={
                         (0, 0): red("骑"),
                         (1, 1): green("步"),

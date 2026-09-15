@@ -2,21 +2,21 @@
 # -*- coding: utf-8 -*-
 """编辑器的无窗口自检：`python tools/editor/selftest.py`（退出码 0 = 全通过）。
 
-它守住的是「编辑器不会悄悄改坏剧本」这件事：
+它守住的是「编辑器不会悄悄改坏指南」这件事（两个页签各查一遍）：
 
-1. 磁盘上的五个模块**已经是规范形式**——所以打开编辑器、什么都不改就保存，不会产生无谓改动；
-2. **往返不丢信息**：载入 → 渲染成源码 → 再载入，数据必须逐字节相同
-   （棋子、箭头、高亮、文字、停留时间，任何一处抄错都会在这里红）；
+1. 磁盘上的文件**已经是规范形式**——所以打开编辑器、什么都不改就保存，不会产生无谓改动；
+2. **往返不丢信息**：载入 → 渲染成源码 → 再载入，数据必须逐字节相同；
 3. 渲染是**幂等**的：同一份数据渲染两次结果一样；
-4. 各种编辑操作（摆子 / 擦除 / 高亮 / 画箭头 / 删箭头 / 增删帧 / 撤销重做）改的都是该改的地方，
-   而且**全程不写磁盘**；
+4. 各种编辑操作改的都是该改的地方，而且**全程不写磁盘**
+   （动画：摆子 / 擦除 / 高亮 / 画箭头 / 删箭头 / 增删帧；文字：增删移条目 / 改字段）；
 5. 「重新载入」是真的重新从磁盘导入（不是把内存里的旧对象再拿一遍）。
 
-它同时是 `codegen` 的回归网：改渲染器时先跑它。
+它同时是 `codegen` 与 `text_codegen` 的回归网：改渲染器时先跑它。
 """
 
 from __future__ import annotations
 
+import copy
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -26,7 +26,8 @@ TOOLS = HERE.parent
 sys.path.insert(0, str(TOOLS))
 
 import guide_demo_kit as kit  # noqa: E402
-from editor import codegen, model  # noqa: E402
+import guide_text_kit as text_kit  # noqa: E402
+from editor import codegen, model, text_codegen, text_model  # noqa: E402
 
 _passed = 0
 _failed = 0
@@ -185,10 +186,108 @@ def main() -> int:
           "重新载入换的是新对象（模块缓存已清掉，手改 .py 后点它就能读到）")
     check(not doc.problems(), "重新载入之后仍然过校验")
 
-    print("-- 不该写磁盘的地方确实没写 --")
+    print("-- 动画页签：不该写磁盘的地方确实没写 --")
     modules = sorted(path.name for path in model.DEMOS_DIR.glob("*.py"))
     check(len(modules) >= 5, f"tools/demos 下有 {len(modules)} 个模块：{'、'.join(modules)}")
     leftovers = list(model.DEMOS_DIR.glob("*.tmp"))
+    check(not leftovers, f"没有留下临时文件（{leftovers}）")
+
+    print("-- 文字页签：数据 --")
+    text_doc = text_model.TextDoc()
+    problems = text_doc.problems()
+    check(not problems, "指南文案过校验" + ("" if not problems else f"（{problems[0]}）"))
+    check(text_doc.summary().startswith("7 页"), f"摘要看起来对：{text_doc.summary()}")
+    check(len(text_model.pages()) == 8,
+          f"页数对（怎么玩 + 小标题 + 五种棋子 + 易错点）：{len(text_model.pages())} 页")
+    check(text_model.page_kind(text_model.INTRO) == "intro"
+          and text_model.page_kind(text_model.PIECES_TITLE) == "heading"
+          and text_model.page_kind(text_model.OUTRO) == "outro"
+          and text_model.page_kind("王") == "piece", "四种页型都认得出来")
+    for symbol in text_kit.PIECE_SYMBOLS:
+        piece = text_model.piece_of(text_doc.text, symbol)
+        check(piece is not None and bool(piece.points) and bool(piece.short),
+              f"「{symbol}」那一页有摘要和正文")
+    check(text_model.points_of(text_doc.text, text_model.PIECES_TITLE) == [],
+          "「小标题」那一页没有正文（界面据此把条目区藏起来）")
+
+    print("-- 文字页签：渲染器（磁盘上的文件已经是规范形式）--")
+    source = text_model.SOURCE_PATH.read_text(encoding="utf-8")
+    text_header = text_codegen.split_header(source)
+    check(text_codegen.render_module(text_header, text_doc.text) == source,
+          "tools/guide_text.py 渲染后与原文件一字不差（保存不会产生无谓改动）")
+    check(text_codegen.MARKER_BEGIN in source, "tools/guide_text.py 有「剧本区」标记")
+    check("from guide_text_kit import GuideText, PieceText" in source,
+          "import 行里两个名字都在（少了它生成的模块一 import 就 NameError）")
+
+    print("-- 文字页签：渲染 → 再载入，数据不能有任何变化 --")
+    rendered = text_codegen.render_module(text_header, text_doc.text)
+    namespace: Dict[str, Any] = {"__name__": "probe_guide_text"}
+    exec(compile(rendered, "<guide_text.py>", "exec"), namespace)
+    again_text = namespace["guide_text"]()
+    check(text_kit.dumps(again_text) == text_kit.dumps(text_doc.text), "文案渲染后再载入，一字不差")
+    check(text_codegen.render_module(text_codegen.split_header(rendered), again_text) == rendered,
+          "再渲染一次结果相同（幂等）")
+
+    print("-- 文字页签：条目上的编辑操作（全在内存里，不写磁盘）--")
+    points: List[str] = list(text_doc.text.intro_points)
+    index = text_model.add_point(points, 1, "插一条")
+    check(index == 1 and points[1] == "插一条", "能在中间插一条")
+    check(text_model.add_point(points, 999, "末尾") == len(points) - 1, "下标超界时插到最后")
+    check(text_model.move_point(points, 1, 1) == 2 and points[2] == "插一条", "能把一条往下挪")
+    check(text_model.move_point(points, 0, -1) == 0, "到顶了挪不动（不会把首条吞掉）")
+    check(text_model.remove_point(points, 2) and "插一条" not in points, "能删掉一条")
+    check(not text_model.remove_point(points, 99), "下标越界时删不动、也不炸")
+    check(len(points) == len(text_doc.text.intro_points) + 1, "插进去的那条还在（下面把末尾那条删掉）")
+    text_model.remove_point(points, len(points) - 1)
+    check(points == list(text_doc.text.intro_points), "折腾一圈之后这条列表回到原样")
+
+    print("-- 文字页签：改坏了会被拦下来 --")
+    broken = copy.deepcopy(text_doc.text)
+    broken.intro_title = ""
+    broken.intro_card_glyph = "两个字"
+    broken.pieces = broken.pieces[:-1]
+    broken.outro_points = [""]
+    problems = text_kit.validate(broken)
+    check(any("标题" in item for item in problems), f"空标题会被拦下（{problems[0]}）")
+    check(any("大字" in item for item in problems), "左栏卡片的大字不是一个字会被拦下")
+    check(any("缺这些棋子" in item for item in problems), "漏了一个兵种会被拦下")
+    check(any("是空的" in item for item in problems), "空条目会被拦下")
+
+    warned = copy.deepcopy(text_doc.text)
+    warned.pieces[0].short = "这个摘要实在是太长了根本放不下"
+    warned.outro_points = ["・自己带了符号", "・自己带了符号"]
+    notes = text_kit.warnings(warned)
+    check(any("太长" in item for item in notes), "short 太长会提醒")
+    check(any("开头符号" in item for item in notes), "自己写了「・」会提醒")
+    check(any("一模一样" in item for item in notes), "两条重复会提醒")
+
+    print("-- 文字页签：撤销 / 重做 --")
+    frozen = text_kit.dumps(text_doc.text)
+    text_doc.push_undo()
+    text_doc.text.intro_title = "改一下"
+    check(text_kit.dumps(text_doc.text) != frozen, "改动确实生效了")
+    text_doc.undo()
+    check(text_kit.dumps(text_doc.text) == frozen, "撤销能回到改动之前")
+    text_doc.redo()
+    check(text_kit.dumps(text_doc.text) != frozen, "重做能再走回去")
+    text_doc.undo()
+
+    print("-- 文字页签：「重新载入」是真的从磁盘重新导入 --")
+    text_before_id = id(text_doc.text)
+    text_doc.reload()
+    check(id(text_doc.text) != text_before_id,
+          "重新载入换的是新对象（模块缓存已清掉，手改 .py 后点它就能读到）")
+    check(not text_doc.problems(), "重新载入之后仍然过校验")
+
+    print("-- 文字页签：保存（没改动时不该动文件）--")
+    source_before = text_model.SOURCE_PATH.read_text(encoding="utf-8")
+    notes = text_doc.save()
+    check(bool(notes), f"保存会给出结果说明（{notes[0]}）")
+    check(text_model.SOURCE_PATH.read_text(encoding="utf-8") == source_before,
+          "没改动时保存不会重写 tools/guide_text.py")
+    check(text_model.JSON_PATH.read_text(encoding="utf-8") == text_kit.dumps(text_doc.text),
+          "保存之后 data/guide_text.json 与文案一致")
+    leftovers = list(TOOLS.glob("*.tmp"))
     check(not leftovers, f"没有留下临时文件（{leftovers}）")
 
     print(f"\n通过 {_passed} 项，失败 {_failed} 项")

@@ -1,15 +1,33 @@
-# 指南演示（动画）作者工具
+# 指南作者工具（纯文本 + 动画）
 
-指南里那些会动的小棋盘，现在是**纯动画**：**每一帧就是一张画**——画哪几枚棋子、画哪几条箭头、
-高亮哪些格子、下面写哪句话、停多久，全部由你写死。游戏只按顺序把这些帧画出来。
+指南在游戏里是两样东西，各有一条「Python 工具 → `data/*.json` → 游戏读」的流水线：
+
+* **纯文本**——页面上的字（标题、左栏卡片的一句话、一条条说明）；
+* **演示**——那些会动的小棋盘（纯动画，每一步都是画出来的）。
 
 ```
-tools/demos/*.py                     你写这里（棋子 / 箭头 / 高亮 / 文字 / 停留时间）
+tools/guide_text.py                     ← 纯文本：你改这里（标题 / 摘要 / 一条条的正文）
+      ↓  python tools/export_guide_text.py
+neo-two-kings/data/guide_text.json      游戏读它（别手改）
+      ↓  GuideText.load_text() → PieceGuide
+guide.gd 排版成页面 / game.gd 的长按卡片
+
+tools/demos/*.py                        ← 演示：你写这里（棋子 / 箭头 / 高亮 / 文字 / 停留时间）
       ↓  python tools/export_guide_demos.py
-neo-two-kings/data/guide_demos.json  游戏读它（别手改）
+neo-two-kings/data/guide_demos.json     游戏读它（别手改）
       ↓  GuideDemos.load_demos() → GuideDemos.build()
 帧列表 → GuideDemo 画出来（不跑棋规）
 ```
+
+两条都是**改完一定要跑一次导出**：游戏和测试读的都是 JSON。忘了导出，
+`--check` 能查出来，`tests/run-tests.ps1` 第 0 步也把两件事都挂着。
+
+---
+
+## 演示：会动的小棋盘
+
+演示是**纯动画**：**每一帧就是一张画**——画哪几枚棋子、画哪几条箭头、
+高亮哪些格子、下面写哪句话、停多久，全部由你写死。游戏只按顺序把这些帧画出来。
 
 > ⚠ **和以前最大的不同**：早先的演示是「每一步拿 `rules.gd` 现算」——改棋规，演示会跟着变，
 > 也不可能出现「文字说打得到、画面上却打不到」。
@@ -24,13 +42,22 @@ neo-two-kings/data/guide_demos.json  游戏读它（别手改）
 python tools/editor/editor.py
 ```
 
-只用到标准库（tkinter），不用起服务、不用开浏览器。界面四块：
+只用到标准库（tkinter），不用起服务、不用开浏览器。窗口里两个页签：
+
+* **动画**——动画那四块（下面这张图）；
+* **文字**——左边选页（怎么玩 → 小标题 → 五种棋子 → 容易搞错的那一页），
+  右边改这一页的字段，底下一大块一条条改正文：左列点第几条，右边改那一条。
+  它编辑的就是 `tools/guide_text.py`。
+
+两个页签**各存各的**（动画写 `tools/demos/*.py` + `data/guide_demos.json`，
+文字写 `tools/guide_text.py` + `data/guide_text.json`），`Ctrl+S` 存当前页签，
+左上角的窗口标题带 `*` 表示有没存的东西。
 
 ```
 ┌─ 兵种 王 弓 骑 盾 步   动画 ◀ 第 1/2 段 ▶  新动画 删本段 ─────────────┐
 ├─ 撤销 重做 重新载入 校验  保存到 Python ─────────────────────────────┤
 ├──────────┬─────────────────────────────────┬────────────────────────┤
-│ 帧        │  工具[摆子|箭头|高亮] 棋子[王弓骑盾步]│  属性                  │
+│ 帧        │  工具[摆子|箭头|高亮|镜头] 棋子[王弓骑盾步]│  属性                  │
 │ 1. 2s …   │              红 绿               │  标题 / 棋盘边长        │
 │ 2. 2s …   │  箭头[移动|攻击|跳跃]            │  说明 / 停留时间        │
 │ 3. 2s …   │  ┌───────────────────────┐      │  这一帧的箭头（可删）   │
@@ -39,6 +66,24 @@ python tools/editor/editor.py
 ├──────────┴─────────────────────────────────┴────────────────────────┤
 │ 状态栏：这一步做了什么 / 校验结果                                    │
 └─────────────────────────────────────────────────────────────────────┘
+```
+
+「文字」页签长这样：
+
+```
+┌─ 撤销 重做 重新载入 校验   保存到 Python ───────────────────────────┐
+├──────────────┬──────────────────────────────────────────────────────┤
+│ 页面          │ 这一页的标题      [怎么玩                          ] │
+│  怎么玩       │ 左栏卡片的大字    [棋]                               │
+│  五种棋子（小标题）│ 左栏卡片的一句话 [规则总览]                        │
+│  王           ├──────────────────────────────────────────────────────┤
+│  弓           │ 这一页的正文（一条一句；界面上会自动加「・」）        │
+│  骑           │ ┌───────────────┐ ┌────────────────────────────────┐ │
+│  盾           │ │1. 7×7 棋盘…   │ │ 7×7 棋盘，红方在左上、绿方在右下 │ │
+│  步           │ │2. 双方轮流…   │ │ ……                             │ │
+│  几个容易搞错的点│ └───────────────┘ └────────────────────────────────┘ │
+│              │ ＋新增 删除 ↑ 上移 ↓ 下移      正在改第 1 / 5 条        │
+└──────────────┴──────────────────────────────────────────────────────┘
 ```
 
 **工具只有四个**：
@@ -74,7 +119,72 @@ python tools/editor/editor.py
 先 `compile()` 一遍生成的源码、再原子写入（写临时文件再替换）；校验不过（比如某帧没写文字）
 会直接拒绝保存。
 
-## 一分钟上手（纯手写）
+## 一分钟上手（纯文本）
+
+```bash
+# 1. 改文字
+#    tools/guide_text.py
+
+# 2. 导出（会先校验，报错就一行都不写）
+python tools/export_guide_text.py
+
+# 3. 看效果：Godot 里运行项目 → 主菜单 →「棋子指南」
+```
+
+跑导出时会打一张表，一眼看出这次改了多少：
+
+```
+文案来源：tools/guide_text.py
+  页面                条目      字数
+  怎么玩             5     281
+  王                 5     278
+  弓                 7     384
+  骑                 5     262
+  盾                 6     291
+  步                 5     256
+  几个容易搞错的点     4     199
+  合计                37    1951
+[通过] 文案校验通过：7 页 / 37 条 / 1951 字
+```
+
+`--check` 能查出「文案与 JSON 不一致」，`tests/run-tests.ps1` 第 0 步已经挂了这道检查。
+
+## 一份文案长什么样
+
+```python
+def guide_text():
+    return GuideText(
+        intro_title      = "怎么玩",
+        intro_points     = ["7×7 棋盘，……", "双方轮流走子。……"],   # 一条一句
+        intro_card_glyph = "棋",          # 左栏那张卡上的大字（正好一个字）
+        intro_card_short = "规则总览",     # 左栏那张卡上的一句话
+        pieces_title     = "五种棋子",     # 左栏里棋子卡上方的小标题
+        pieces           = [
+            PieceText(
+                symbol  = "王",           # 用显示字指认（王/弓/骑/盾/步）
+                short   = "角落里的近战",  # 左栏速查卡上那一句话
+                tagline = "只能在自己角落的 2×2 里挪动，靠走上去直接吃子。",
+                points  = ["移动：……", "吃子：……"],
+            ),
+            …另外四种…
+        ],
+        outro_title      = "几个容易搞错的点",
+        outro_points     = ["「结算」不等于「走子」：……"],
+    )
+```
+
+| 字段 | 意思 |
+|---|---|
+| `intro_title` / `intro_points` | 「怎么玩」那一页的标题与条目 |
+| `intro_card_glyph` / `intro_card_short` | 左栏最上面那张速查卡的大字与一句话 |
+| `pieces_title` | 左栏里棋子卡上方那行小标题 |
+| `pieces[].symbol` | 棋子用**显示字**指认——和棋盘上的字、`PieceInfo.SYMBOLS` 是同一套 |
+| `pieces[].short` | 左栏那张速查卡上的一句话（≈6 个汉字以内，写长了卡片换行、六张卡就放不下） |
+| `pieces[].tagline` | 这一页开头那一句 |
+| `pieces[].points` | 一条条正文；界面自己会加「・」，**别自己写** |
+| `outro_title` / `outro_points` | 「几个容易搞错的点」那一页 |
+
+## 一分钟上手（动画，纯手写）
 
 ```bash
 # 1. 改动画，比如给弓那段加一帧
@@ -182,7 +292,13 @@ Frame(text="镜头挪到右下角",   view=rect(3, 3, 4, 4), pieces={...},
 
 ## 校验会拦住什么
 
-导出（和编辑器保存）之前逐帧检查，任何一条不过就**一行都不写**：
+**文字**（`python tools/export_guide_text.py`）：任何一条不过就一行都不写——
+
+- 「怎么玩」/小标题/「易错点」的标题不能空，左栏卡片的大字必须**正好一个字**；
+- 五种棋子每种都要有一页，不能重、不能写不认识的兵种字；
+- 每页的 `tagline`、`short` 不能空；每页至少一条正文，条目不能是空的。
+
+**动画**（导出和编辑器保存之前逐帧检查）：
 
 - 每帧必须有 `text`、`hold > 0`；
 - 棋子、高亮、箭头的两端都必须在 `size`×`size` 棋盘内；
@@ -199,59 +315,68 @@ Frame(text="镜头挪到右下角",   view=rect(3, 3, 4, 4), pieces={...},
 ## 编辑器自检
 
 ```bash
-python tools/editor/selftest.py     # 61 项，不写磁盘，退出码 0 = 全通过
+python tools/editor/selftest.py     # 100 项，不写磁盘，退出码 0 = 全通过
 ```
 
-守的是「编辑器不会把剧本改坏」：磁盘上的模块必须已经是规范形式（所以「打开就保存」不产生
+守的是「编辑器不会把指南改坏」：磁盘上的文件必须已经是规范形式（所以「打开就保存」不产生
 无谓改动）、渲染 → 再载入的数据必须一字不差、渲染必须幂等、每个编辑操作改的都是该改的地方、
 「重新载入」是真的重新从磁盘导入、镜头（含 `view_hold`）也能原样往返。
+**两个页签各查一遍**：动画那份查帧与镜头，文字那份查页面/条目/字段与校验规则。
 `tests/run-tests.ps1` 第 0 步会顺带跑它。
 
-游戏那边的测试是 `tests/test_guide_demos.gd`（109 项）：帧数据能不能解出来、文字有没有写、
-棋子与箭头在不在棋盘里、相邻帧重不重复、画布范围与逐帧缩放对不对、控件能不能播，
-以及**自己规定的镜头**有没有被照做（写了就用它、舞台取最大值、小镜头居中、`view_hold` 硬切）。
-**它不再核对棋规**——那是这次改成纯动画之后主动放弃的保护。
+游戏那边的测试有 `tests/test_menu_ui.gd`（主菜单 → 指南：五种棋子都有说明、
+「怎么玩」里写的兵力与真实初始布局对账）与 `tests/test_guide_demos.gd`（109 项：
+帧数据能不能解出来、文字有没有写、棋子与箭头在不在棋盘里、相邻帧重不重复、
+画布范围与逐帧缩放对不对、控件能不能播，以及**自己规定的镜头**有没有被照做）。
+演示那份**不再核对棋规**——那是改成纯动画之后主动放弃的保护。
 
 ## 文件一览
 
 | 文件 | 作用 |
 |---|---|
-| `tools/guide_demo_kit.py` | 作者 API（`Demo`/`Frame`/`red`/`green`/`arrow`/`rect`）+ 校验 + 序列化 |
+| `tools/guide_text.py` | **纯文本**：指南上所有的字（标题 / 摘要 / 一条条正文） |
+| `tools/guide_text_kit.py` | 纯文本的作者 API（`GuideText`/`PieceText`）+ 校验 + 序列化 |
+| `tools/export_guide_text.py` | 命令行入口：校验 → 写出 `data/guide_text.json` |
+| `tools/guide_demo_kit.py` | 演示的作者 API（`Demo`/`Frame`/`red`/`green`/`arrow`/`rect`）+ 校验 + 序列化 |
 | `tools/demos/king.py` … | 五个兵种各自的动画（骑有两段，在 `knight.py` 里） |
 | `tools/demos/__init__.py` | 汇总五个模块；新增兵种时在这里挂上去 |
-| `tools/export_guide_demos.py` | 命令行入口：校验 → 写出 JSON |
-| `tools/editor/editor.py` | **可视化编辑器**入口 |
-| `tools/editor/ui.py` | 编辑器界面（Tkinter，四个工具，含「镜头」） |
-| `tools/editor/model.py` | 编辑器数据层：载入 / 改 / 撤销 / 校验 / 保存（不碰界面） |
+| `tools/export_guide_demos.py` | 命令行入口：校验 → 写出 `data/guide_demos.json` |
+| `tools/editor/editor.py` | **可视化编辑器**入口（两个页签：动画 / 文字） |
+| `tools/editor/ui.py` | 编辑器的窗口与「动画」页签（Tkinter，四个工具，含「镜头」） |
+| `tools/editor/model.py` | 动画页签的数据层：载入 / 改 / 撤销 / 校验 / 保存（不碰界面） |
 | `tools/editor/codegen.py` | `Demo`/`Frame` 对象 → Python 源码（只重写「剧本区」） |
-| `tools/editor/selftest.py` | 编辑器自检（无窗口，61 项） |
-| `neo-two-kings/data/guide_demos.json` | 产物，游戏读它。**别手改**（下次导出会覆盖） |
+| `tools/editor/text_ui.py` | 「文字」页签（左边选页、右边改字段与条目） |
+| `tools/editor/text_model.py` | 文字页签的数据层：页面 / 条目操作 / 撤销 / 校验 / 保存 |
+| `tools/editor/text_codegen.py` | `GuideText` 对象 → `tools/guide_text.py` 的源码 |
+| `tools/editor/atomic.py` | 原子写文件（两个页签保存时共用） |
+| `tools/editor/selftest.py` | 编辑器自检（无窗口，100 项） |
+| `neo-two-kings/data/guide_text.json` | 文案产物，游戏读它。**别手改**（下次导出会覆盖） |
+| `neo-two-kings/data/guide_demos.json` | 演示产物，游戏读它。**别手改**（下次导出会覆盖） |
+| `neo-two-kings/scripts/guide_text.gd` | 游戏端：JSON → 文案字段（`load_text`），读不到就把问题说清楚 |
 | `neo-two-kings/scripts/demos/guide_demos.gd` | 游戏端：JSON → 帧（`load_demos` / `build` / `view_of` / `canvas_of`） |
 | `neo-two-kings/scripts/guide_demo.gd` | 游戏端：把帧画出来、按镜头逐帧显示、循环播放 |
-| `neo-two-kings/scripts/piece_guide.gd` | 只有文字（说明、打法），动画从 JSON 取 |
+| `neo-two-kings/scripts/piece_guide.gd` | 门面：界面只问它，自己一个字都不写（文案与演示分别从上面两份 JSON 读） |
 
 ## 手写剧本时的那道「剧本区」标记
 
-每个 `tools/demos/*.py` 长这样：
+`tools/guide_text.py` 与每个 `tools/demos/*.py` 都长这样：
 
 ```python
 # -*- coding: utf-8 -*-
 """大段说明：为什么这么摆位、这个坑怎么来的……（编辑器和导出器都不动这一段）"""
 
-from guide_demo_kit import Demo, Frame, red, green, arrow
+from guide_text_kit import GuideText, PieceText   # 演示那边是 from guide_demo_kit import …
 
-SYMBOL = "王"
+SYMBOL = "王"        # 只有演示模块有这一行
 
 # --- 剧本区开始：以下由 tools/editor 改写（手改这里的格式会在下次保存时被覆盖）---
-def demos():
-    return [
-        Demo(...),
-    ]
+def guide_text():    # 演示那边是 def demos():
+    return GuideText(...)
 # --- 剧本区结束 ---
 ```
 
-* **标记以上**是你手写的地方：说明文档、import、`SYMBOL`。编辑器保存时原样留着。
+* **标记以上**是你手写的地方：说明文档、import、（演示模块还有 `SYMBOL`）。编辑器保存时原样留着。
 * **标记之间**是数据：编辑器会整段重写，所以别在这里写注释或辅助函数
   （要写就把话挪到文件开头的 docstring 里）。
-* 编辑器顺带会把 `from guide_demo_kit import …` 那一行补齐（只保留这个库真有的名字），
+* 编辑器顺带会把 `from …_kit import …` 那一行补齐（只保留那个库真有的名字），
   不然给某个兵种加一段带箭头/高亮的动画时，生成的模块一 import 就 `NameError`。

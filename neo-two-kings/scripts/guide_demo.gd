@@ -35,8 +35,6 @@ const GLYPH_RATIO := 0.62
 const ARROW_WIDTH_RATIO := 0.055
 const ARROW_HEAD_RATIO := 0.30
 const ARROW_HEAD_MIN := 7.0
-## 箭头两端让开的空隙（占箭头全长的比例），免得压住棋子字。
-const ARROW_INSET_RATIO := 0.20
 ## 可见性判定的容差：进入可视区一点点就开始播。
 const VISIBLE_MARGIN := 24.0
 ## 棋盘格子的最大边长（像素）。棋盘逐帧缩放，这是它能到的最大尺寸。
@@ -443,37 +441,41 @@ func _draw_arrows(frame: Dictionary) -> void:
 		_draw_arrow(_cell_center(arrow["from"]), _cell_center(arrow["to"]), color, width)
 
 
+## 一条箭头：**两端就落在两个格子的正中心**（不往里缩），这样箭头和棋子、格线是同一套坐标。
+##
+## 压在棋子字上的那一段不用管：箭头画在棋子**下面**（见 _draw），被盖住的部分本来就看不见，
+## 而漏出来的那一段仍然指着目标格的中心。
 func _draw_arrow(from: Vector2, to: Vector2, color: Color, width: float) -> void:
-	var delta := to - from
-	var length := delta.length()
+	var length := from.distance_to(to)
 	if length <= 0.001:
 		return
-	var dir := delta / length
-	# 空出两端的棋子字，箭头不压在上面
-	var inset := minf(length * ARROW_INSET_RATIO, _cell * 0.34)
-	var start := from + dir * inset
-	var end := to - dir * inset
-	if (end - start).length() <= 0.001:
-		start = from
-		end = to
+	var dir := (to - from) / length
 	var head := maxf(_cell * ARROW_HEAD_RATIO, ARROW_HEAD_MIN)
-	head = minf(head, (end - start).length() * 0.5)
-	var neck := end - dir * head
-	draw_line(start, neck, color, width, true)
+	head = minf(head, length * 0.5)
+	var neck := to - dir * head
+	draw_line(from, neck, color, width, true)
 	var half := head * 0.5
 	var normal := Vector2(-dir.y, dir.x) * half
-	draw_colored_polygon(PackedVector2Array([end, neck + normal, neck - normal]), color)
+	draw_colored_polygon(PackedVector2Array([to, neck + normal, neck - normal]), color)
 
 
+## 棋子字画在格子的**正中心**。
+##
+## 基线不能直接放在格子中心线上：字体给的是「ascent + descent」这条字身框，中文字身框上下并不
+## 对称（ascent 远大于 descent），基线压在中心会让整个字明显偏上（46 像素的格子实测偏上 10.5 像素）。
+## 把字身框的**中点**对到格子中心（也就是基线落在中心下方 (ascent − descent)/2 处）才对得上。
 func _draw_pieces(state: Dictionary) -> void:
 	var font := _theme_font()
 	var font_size := int(roundf(_cell * GLYPH_RATIO))
+	var ascent := font.get_ascent(font_size)
+	var descent := font.get_descent(font_size)
+	var lift := (ascent - descent) * 0.5
 	for cell in state.keys():
 		var piece: PieceInfo = state[cell]
 		var color: Color = Piece.CAMP_COLORS.get(piece.camp, Color.BLACK)
 		var center := _cell_center(cell)
 		var glyph_size := font.get_string_size(piece.symbol(), HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
-		var baseline := center - glyph_size * 0.5 + Vector2(0, font.get_ascent(font_size) * 0.5 + font.get_descent(font_size) * 0.5)
+		var baseline := center - Vector2(glyph_size.x * 0.5, 0.0) + Vector2(0.0, lift)
 		draw_string(font, baseline, piece.symbol(), HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
 
 

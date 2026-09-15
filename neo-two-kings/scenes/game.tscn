@@ -2,22 +2,7 @@
 
 [ext_resource type="Script" path="res://scripts/game.gd" id="1_game"]
 [ext_resource type="Script" path="res://scripts/board.gd" id="2_board"]
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_chat"]
-content_margin_left = 0.0
-content_margin_top = 0.0
-content_margin_right = 0.0
-content_margin_bottom = 0.0
-bg_color = Color(0.964706, 0.972549, 0.984314, 1)
-border_width_left = 1
-border_width_top = 1
-border_width_right = 1
-border_width_bottom = 1
-border_color = Color(0.121569, 0.372549, 0.815686, 0.25)
-corner_radius_top_left = 10
-corner_radius_top_right = 10
-corner_radius_bottom_right = 10
-corner_radius_bottom_left = 10
+[ext_resource type="Theme" path="res://themes/ui_theme.tres" id="3_ui_theme"]
 
 [node name="Game" type="Control"]
 layout_mode = 3
@@ -26,6 +11,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+theme = ExtResource("3_ui_theme")
 script = ExtResource("1_game")
 
 [node name="Background" type="ColorRect" parent="."]
@@ -61,6 +47,7 @@ offset_top = 28.0
 offset_right = -212.0
 offset_bottom = 80.0
 grow_horizontal = 0
+theme_type_variation = &"MenuButtonPlain"
 theme_override_font_sizes/font_size = 22
 text = "返回主菜单"
 
@@ -74,6 +61,7 @@ offset_top = 28.0
 offset_right = -28.0
 offset_bottom = 80.0
 grow_horizontal = 0
+theme_type_variation = &"MenuButtonPlain"
 theme_override_font_sizes/font_size = 22
 text = "聊天"
 
@@ -105,7 +93,7 @@ offset_left = 952.0
 offset_top = 96.0
 offset_right = 1248.0
 offset_bottom = 688.0
-theme_override_styles/panel = SubResource("StyleBoxFlat_chat")
+theme_type_variation = &"MenuPanel"
 
 [node name="ChatMargin" type="MarginContainer" parent="ChatPanel"]
 layout_mode = 2
@@ -134,6 +122,7 @@ text = "聊天"
 
 [node name="ChatCloseButton" type="Button" parent="ChatPanel/ChatMargin/ChatColumn/ChatHeader"]
 layout_mode = 2
+theme_type_variation = &"MenuButtonPlain"
 theme_override_font_sizes/font_size = 16
 text = "收起"
 
@@ -154,9 +143,11 @@ theme_override_constants/separation = 8
 [node name="ChatInput" type="LineEdit" parent="ChatPanel/ChatMargin/ChatColumn/ChatInputRow"]
 layout_mode = 2
 size_flags_horizontal = 3
+theme_type_variation = &"MenuInput"
 placeholder_text = "输入消息…"
 
 [node name="ChatSendButton" type="Button" parent="ChatPanel/ChatMargin/ChatColumn/ChatInputRow"]
 layout_mode = 2
+theme_type_variation = &"MenuButtonPrimary"
 theme_override_font_sizes/font_size = 18
 text = "发送"
